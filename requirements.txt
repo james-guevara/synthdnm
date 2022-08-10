@@ -1,0 +1,4 @@
+joblib==1.1.0
+numpy==1.19.5
+pandas==1.1.5
+pysam==0.17.0
