@@ -1,6 +1,7 @@
 import joblib
 import numpy as np
 import pandas as pd
+import pybedtools
 import pysam
 import sys
 
@@ -176,6 +177,8 @@ def run_snv_classifier(df, clf_snv_filepath):
     clf_snv = joblib.load(clf_snv_filepath)
     preds_snv_values = clf_snv.predict_proba(df_snv_values[:, 5:])
     df_preds  = pd.DataFrame({"chrom": df_snv_values[:, 0], "pos": df_snv_values[:, 1], "ref": df_snv_values[:, 2], "alt": df_snv_values[:, 3], "iid": df_snv_values[:, 4], "prob": preds_snv_values[:, 0]})
+    # Retain the index for easy sorting later on
+    df_snv["copy_index"] = df_snv.index
     return df_snv.merge(df_preds, on = key, how = "left")
 
 def run_indel_classifier(df, clf_indel_filepath):
@@ -184,7 +187,23 @@ def run_indel_classifier(df, clf_indel_filepath):
     clf_indel = joblib.load(clf_indel_filepath)
     preds_indel_values = clf_indel.predict_proba(df_indel_values[:, 5:])
     df_preds  = pd.DataFrame({"chrom": df_indel_values[:, 0], "pos": df_indel_values[:, 1], "ref": df_indel_values[:, 2], "alt": df_indel_values[:, 3], "iid": df_indel_values[:, 4], "prob": preds_indel_values[:, 0]})
+    df_indel["copy_index"] = df_indel.index
     return df_indel.merge(df_preds, on = key, how = "left")
 
 df_snv_preds = run_snv_classifier(df_dnm_features_table, clf_snv_filepath)
 df_indel_preds = run_indel_classifier(df_dnm_features_table, clf_indel_filepath)
+
+# Use indices for sorting
+df_output = pd.concat([df_snv_preds, df_indel_preds]).set_index("copy_index").sort_index()
+df_output.to_csv("df_output.tsv", sep = "\t", index = False)
+
+# Output DNM BED
+df_output["bed_name"] = df_output.apply(lambda row: row.chrom + "_" + str(row.pos) + "_" + row.ref + "_" + row.alt + "_" + row.iid, axis = 1)
+df_output["start"] = df_output["pos"] - 1
+df_output["end"] = df_output["pos"]
+df_output_bed = df_output[["chrom", "start", "end", "bed_name", "prob"]]
+dnm_pybed = pybedtools.BedTool.from_dataframe(df_output_bed)
+dnm_pybed.saveas("dnms.bed")
+
+# Output DNM VCF (or use tab-delimited table?)
+# If I use tab-delimited file, then the only columns I'd add are probability for now, maybe truth label. These would be float or integer in VCF header. And we can filter DNMs based on those predictions from the input VCF.
