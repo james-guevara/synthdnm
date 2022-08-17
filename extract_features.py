@@ -8,25 +8,35 @@ import sys
 # Get father and mother of each sample
 def make_pedigree_table(ped_filepath):
     sample_to_parental_table = {}
+    pedigree_table = {}
     with open(ped_filepath, "r") as f:
         for line in f:
             linesplit = line.rstrip().split("\t")
+            family_id = linesplit[0]
             sample_id = linesplit[1]
             father_id = linesplit[2]
             mother_id = linesplit[3]
+            sex_code = linesplit[4]
+            phenotype_code = linesplit[5]
             # For now, we skip the samples with no parents (i.e. they're almost certainly just parents)
-            if father_id == "0" or mother_id == "0": continue # We're skipping this row if either parent is "0"
+            # if father_id == "0" or mother_id == "0": continue # We're skipping this row if either parent is "0"
             sample_to_parental_table[sample_id] = (father_id, mother_id)
-    return sample_to_parental_table
+            if family_id not in pedigree_table: pedigree_table[family_id] = {"father_id": "", "mother_id": "", "offspring": []}
+            if father_id == "0" and mother_id == "0": 
+                if sex_code == "1": pedigree_table[family_id]["father_id"] = sample_id
+                elif sex_code == "2": pedigree_table[family_id]["mother_id"] = sample_id 
+            else: pedigree_table[family_id]["offspring"].append(sample_id)
+
+    return sample_to_parental_table, pedigree_table
 
 def make_sample_to_index_table(vcf_filepath):
     sample_index_table = {}
-    # index_sample_table = {}
+    index_sample_table = {}
     vcf_iterator = pysam.VariantFile(vcf_filepath, mode = "r")
     for index, sample in enumerate(vcf_iterator.header.samples):
         sample_index_table[sample] = index
-        # index_sample_table[index] = sample
-    return sample_index_table
+        index_sample_table[index] = sample
+    return sample_index_table, index_sample_table
 
 def get_offspring_indices(sample_to_parental_table, sample_index_table):
     offspring_index_to_id_table = {}
@@ -150,6 +160,7 @@ def make_features_table(vcf_filepath, offspring_index_to_id_table, sample_to_par
 
     return dnm_features_table
 
+"""
 sample_to_parental_table = make_pedigree_table("tutorial.ped")
 sample_to_index_table = make_sample_to_index_table("tutorial.vcf.gz")
 offspring_index_to_id_table = get_offspring_indices(sample_to_parental_table, sample_to_index_table)
@@ -207,3 +218,4 @@ dnm_pybed.saveas("dnms.bed")
 
 # Output DNM VCF (or use tab-delimited table?)
 # If I use tab-delimited file, then the only columns I'd add are probability for now, maybe truth label. These would be float or integer in VCF header. And we can filter DNMs based on those predictions from the input VCF.
+"""
