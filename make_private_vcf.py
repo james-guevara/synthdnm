@@ -1,9 +1,9 @@
 import pysam
 import sys
-from extract_features import make_pedigree_table, make_sample_to_index_table
 
 def make_private_vcf(vcf_filepath, pedigree_table, sample_index_table):
     vcf_iterator = pysam.VariantFile(vcf_filepath, mode = "r")
+    vcf_out = pysam.VariantFile("private.vcf", mode = "w", header = vcf_iterator.header)
     number_of_samples = len(vcf_iterator.header.samples)
     for record in vcf_iterator:
         # Skip multiallelic variants
@@ -28,8 +28,12 @@ def make_private_vcf(vcf_filepath, pedigree_table, sample_index_table):
             if genotypes_of_offspring[2] > 0: continue 
             families_with_alternate_alleles.add(family_id)
             if len(families_with_alternate_alleles) > 1: break
-        if len(families_with_alternate_alleles) == 1: print(record)
+        if len(families_with_alternate_alleles) == 1: vcf_out.write(record) 
+    vcf_out.close()
+    pysam.tabix_index("private.vcf", preset = "vcf", force = True)
 
+"""
 sample_to_parental_table, pedigree_table = make_pedigree_table("tutorial.ped")
 sample_index_table, index_sample_table = make_sample_to_index_table("tutorial.vcf.gz")
 make_private_vcf("tutorial.vcf.gz", pedigree_table, sample_index_table)
+"""

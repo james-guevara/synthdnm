@@ -2,7 +2,7 @@ import sys
 from random import seed
 from random import shuffle
 import re
-
+"""
 # pedigree_filepath = open(sys.argv[1])
 pedigree_filepath = open("tutorial.ped")
 
@@ -36,7 +36,33 @@ for line in pedigree_filepath:
 seed(0)
 indices = list(range(len(pedigree_table)))
 shuffle(indices)
+"""
+def swap_pedigree(pedigree_dict):
+    seed(0)
+    pedigree_keys = list(pedigree_dict)
+    pedigree_indices = list(range(len(pedigree_dict)))
+    shuffle(pedigree_indices)
+    swapped_pedigree_dict = {}
+    for i in range(0, len(pedigree_dict), 2):
+        family_a = pedigree_keys[pedigree_indices[i]]
+        family_a_offspring = pedigree_dict[family_a]["offspring"]
+        family_a_father = pedigree_dict[family_a]["father_id"]
+        family_a_mother = pedigree_dict[family_a]["mother_id"]
 
+        family_b = pedigree_keys[pedigree_indices[i + 1]]
+        family_b_offspring = pedigree_dict[family_b]["offspring"]
+        family_b_father = pedigree_dict[family_b]["father_id"]
+        family_b_mother = pedigree_dict[family_b]["mother_id"]
+
+        family_a_new_pedigree = {"father_id": family_a_father, "mother_id": family_a_mother, "offspring": family_b_offspring} 
+        family_b_new_pedigree = {"father_id": family_b_father, "mother_id": family_b_mother, "offspring": family_a_offspring} 
+
+        swapped_pedigree_dict[family_a] = family_a_new_pedigree     
+        swapped_pedigree_dict[family_b] = family_b_new_pedigree     
+    return swapped_pedigree_dict
+
+
+"""
 swapped_pedigree_table = {}
 pedigree_table_key_list = list(pedigree_table)
 
@@ -67,3 +93,4 @@ for family in swapped_pedigree_table:
     print("{}\t{}\t{}\t{}\t{}\t{}".format(family, father_name, "0", "0", sample_sex_and_phenotype_table[father_name]["sex_code"], sample_sex_and_phenotype_table[father_name]["phenotype_code"]))
     mother_name = swapped_pedigree_table[family]["mother_name"]
     print("{}\t{}\t{}\t{}\t{}\t{}".format(family, mother_name, "0", "0", sample_sex_and_phenotype_table[mother_name]["sex_code"], sample_sex_and_phenotype_table[mother_name]["phenotype_code"]))
+"""
