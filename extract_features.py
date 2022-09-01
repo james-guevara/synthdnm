@@ -3,7 +3,9 @@ import numpy as np
 import pandas as pd
 import pybedtools
 import pysam
+import re
 import sys
+from typing import Tuple
 
 # Make a few dictionaries/tables from the pedigree file
 def make_pedigree_dicts(ped_filepath):
@@ -44,32 +46,65 @@ def make_offspring_index_dict(offspring_parents_dict, sample_index_dict):
         offspring_index_id_dict[sample_index_dict[sample]] = sample 
     return offspring_index_id_dict
 
+def get_ratio(feature):
+    # Check that it's tuple of size 2
+    buffer_ = 1.0
+    return float(feature[0]) / (float(feature[1]) + buffer_)
+
+def get_log2_ratio(feature):
+    # Check that it's a tuple of size 2
+    buffer_ = 1.0
+    feature_log2_coverage_ratio = np.log2( (feature[0] + feature[1] + buffer_) / (np.median([feature[0], feature[1]]) + buffer_) )
+
 # Extract putative de novo mutations from the VCF
-def make_features_dict(vcf_filepath, offspring_index_id_dict, offspring_parents_dict, sample_index_dict):
+def make_features_dict(vcf_filepath, offspring_index_id_dict, offspring_parents_dict, sample_index_dict, features_file = None):
     dnm_features_dict = {}
 
-    header_ = "\t".join(["chrom", "pos", "id", "ref", "alt", "iid", "offspring_GT", "father_GT", "mother_GT", "nalt", "filter", "qual"])
-    format_feature_names = "\t".join(["max_parental_AR", "min_parental_AR", "offspring_AR", "max_parental_DP", "min_parental_DP", "offspring_DP", "max_parental_dnm_PL", "min_parental_dnm_PL", "max_parental_hom_ref_PL", "min_parental_hom_ref_PL", "offspring_dnm_PL", "offspring_hom_ref_PL", "max_parental_GQ", "min_parental_GQ", "offspring_GQ"])
-    info_feature_names = "\t".join(["VQSLOD", "ClippingRankSum", "BaseQRankSum", "FS", "SOR", "MQ", "MQRankSum", "QD", "ReadPosRankSum"])
-    header = "{}\t{}\t{}".format(header_, format_feature_names, info_feature_names) 
+    header_id = "\t".join(["chrom", "pos", "ref", "alt", "iid", "offspring_GT", "father_GT", "mother_GT"])
 
+    format_feature_names = None
+    info_feature_names = None
+    if features_file: 
+        with open(features_file, "r") as f:
+            info_features = f.readline().replace(" ", "").strip().split(",")
+            format_features = f.readline().replace(" ", "").strip().split(",")
+            # Check that these features exist in the header...
+    else:
+        # Default features to extract
+        info_features = ["VQSLOD", "ClippingRankSum", "BaseQRankSum", "FS", "SOR", "MQ", "MQRankSum", "QD", "ReadPosRankSum"]
+        format_features = ["max_parental_AR", "min_parental_AR", "offspring_AR", "max_parental_DP", "min_parental_DP", "offspring_DP", "max_parental_dnm_PL", "min_parental_dnm_PL", "max_parental_hom_ref_PL", "min_parental_hom_ref_PL", "offspring_dnm_PL", "offspring_hom_ref_PL", "max_parental_GQ", "min_parental_GQ", "offspring_GQ"]
+
+    format_feature_names = "\t".join(format_features)
+    info_feature_names = "\t".join(info_features)
+    header = "{}\t{}\t{}".format(header_id, format_feature_names, info_feature_names) 
     vcf_iterator = pysam.VariantFile(vcf_filepath, mode = "r")
     number_of_samples = len(vcf_iterator.header.samples)
+
+    # When we get the format-level features, we want to determine what types (of numbers) they are using the VCF header.
+    # If a particular format feature is single-valued (1), then we'll get 3 values for it (for offspring, mother, father).
+    # If a particular format feature has one value for each possible genotype ("G"), then we'll get 3 values per sample (and so 9 total for a trio pedigree).
+    format_features_dict = {}
+    vcf_header = vcf_iterator.header
+    for format_feature in format_features:
+        number_ = vcf_header.formats[format_feature].number
+        if number_ == 1: format_features_dict[format_feature] = {"offspring_value": float, "father_value": float, "mother_value": float}
+        elif number_ == "G": format_features_dict[format_feature] = {"offspring_value": Tuple[float, float, float], "father_value": Tuple[float, float, float], "mother_value": Tuple[float, float, float]}
+        elif number_ == "R": format_features_dict[format_feature] = {"offspring_value": Tuple[float, float], "father_value": Tuple[float, float], "mother_value": Tuple[float, float]}
+
     for record in vcf_iterator:
         # Skip multiallelic variants
         if len(record.alts) > 1: continue
         # Skip X and Y for now
         if "X" in record.chrom or "Y" in record.chrom: continue
         # Get INFO-level features
-        # For now, these are the INFO features to use: ["VQSLOD","ClippingRankSum","BaseQRankSum","FS","SOR","MQ","MQRankSum","QD","ReadPosRankSum"]
-        info_features = ["VQSLOD", "ClippingRankSum", "BaseQRankSum", "FS", "SOR", "MQ", "MQRankSum", "QD", "ReadPosRankSum"]
         dnm_info_features = {}
         for feature in info_features:
             if feature in record.info:
                 dnm_info_features[feature] = record.info[feature]
-            else: dnm_info_features[feature] = np.nan
-        # Instead:
-        # 1. Loop through offspring
+            else: dnm_info_features[feature] = np.nan # In error log, say that this feature doesn't exist for this record
+
+        # Instead maybe do:
+        # 1. Loop through offspring_parents_dict
         # 2. Get parents of offspring
         # 3. Get indices of offspring and parents for getting genotyping information
         for i in range(number_of_samples):
@@ -83,86 +118,92 @@ def make_features_dict(vcf_filepath, offspring_index_id_dict, offspring_parents_
             if offspring_GT != (0, 1): continue
             if father_GT != (0, 0): continue
             if mother_GT != (0, 0): continue
-           
-            # The GT FORMAT field will of course be required no matter what.
-            # For now, these other FORMAT fields will be required: (AD, DP, GQ, PL)
-            offspring_AD = record.samples[i]["AD"]
-            father_AD = record.samples[sample_index_dict[father_id]]["AD"]
-            mother_AD = record.samples[sample_index_dict[mother_id]]["AD"]
 
-            offspring_DP = record.samples[i]["DP"]
-            father_DP = record.samples[sample_index_dict[father_id]]["DP"]
-            mother_DP = record.samples[sample_index_dict[mother_id]]["DP"]
+            # Getting custom format fields
+            for format_feature in format_features:
+                format_features_dict[format_feature]["offspring_value"] = record.samples[i][format_feature]
+                format_features_dict[format_feature]["father_value"] = record.samples[sample_index_dict[father_id]][format_feature]
+                format_features_dict[format_feature]["mother_value"] = record.samples[sample_index_dict[mother_id]][format_feature]
 
-            offspring_GQ = record.samples[i]["GQ"]
-            father_GQ = record.samples[sample_index_dict[father_id]]["GQ"]
-            mother_GQ = record.samples[sample_index_dict[mother_id]]["GQ"]
-
-            # The PLs are like so: (homozygous_reference_PL, heterozygous_PL, homozygous_alternate_PL) 
-            # For the offspring, heterozygous_PL should always be 0 (since that corresponds to the genotype)
-            # For the parents, homozygous_reference_PL should always be 0 (again, that corresponds to their genotypes)
-            offspring_PL = record.samples[i]["PL"]
-            father_PL = record.samples[sample_index_dict[father_id]]["PL"]
-            mother_PL = record.samples[sample_index_dict[mother_id]]["PL"]
-
-            # Getting post-processed features
-            buffer_ = 1.0
-
-            offspring_AR = float(offspring_AD[1]) / (float(offspring_AD[0]) + buffer_)
-            if offspring_AR > 1.0: offspring_AR = 1.0 / offspring_AR # Should always be a fraction?
-            father_AR = float(father_AD[1]) / (float(father_AD[0]) + buffer_)
-            if father_AR > 1.0: father_AR = 1.0 / father_AR # Should always be a fraction?
-            mother_AR = float(mother_AD[1]) / (float(mother_AD[0]) + buffer_)
-            if mother_AR > 1.0: mother_AR = 1.0 / mother_AR # Should always be a fraction?
-
-            offspring_AD_log2_coverage_ratio = np.log2( (offspring_AD[0] + offspring_AD[1] + buffer_) / (np.median([offspring_AD[0], offspring_AD[1]]) + buffer_) )
-            father_AD_log2_coverage_ratio = np.log2( (father_AD[0] + father_AD[1] + buffer_) / (np.median([father_AD[0], father_AD[1]]) + buffer_) )
-            mother_AD_log2_coverage_ratio = np.log2( (mother_AD[0] + mother_AD[1] + buffer_) / (np.median([mother_AD[0], mother_AD[1]]) + buffer_) )
-
-            offspring_dnm_PL = offspring_PL[1]
-            offspring_hom_ref_PL = offspring_PL[0]
-
-            (min_parental_AR, max_parental_AR) = sorted([father_AR, mother_AR])
-            (min_parental_DP, max_parental_DP) = sorted([father_AD_log2_coverage_ratio, mother_AD_log2_coverage_ratio])
-            (min_parental_GQ, max_parental_GQ) = sorted([father_GQ, mother_GQ])
-            (min_parental_dnm_PL, max_parental_dnm_PL) = sorted([father_PL[1], mother_PL[1]])
-            (min_parental_hom_ref_PL, max_parental_hom_ref_PL) = sorted([father_PL[0], mother_PL[0]]) # These should both be 0...
-
-            key = (record.chrom, record.pos, record.id, record.ref, record.alts[0], offspring_id)
+            key = (record.chrom, record.pos, record.ref, record.alts[0], offspring_id)
             dnm_features_dict[key] = {}
 
             dnm_features_dict[key]["offspring_GT"] = offspring_GT
             dnm_features_dict[key]["father_GT"] = father_GT 
             dnm_features_dict[key]["mother_GT"] = mother_GT 
 
-            # Placeholder values (and they're not used anyway)
-            dnm_features_dict[key]["n_alt"] = "NA"
-            dnm_features_dict[key]["filter"] = "NA"
-            dnm_features_dict[key]["qual"] = "NA"
-
             # FORMAT-level features
-
-            dnm_features_dict[key]["max_parental_AR"] = max_parental_AR 
-            dnm_features_dict[key]["min_parental_AR"] = min_parental_AR 
-            dnm_features_dict[key]["offspring_AR"] = offspring_AR
-            dnm_features_dict[key]["max_parental_DP"] = max_parental_DP
-            dnm_features_dict[key]["min_parental_DP"] = min_parental_DP
-            dnm_features_dict[key]["offspring_DP"] = offspring_DP
-            dnm_features_dict[key]["max_parental_dnm_PL"] = max_parental_dnm_PL
-            dnm_features_dict[key]["min_parental_dnm_PL"] = min_parental_dnm_PL
-            dnm_features_dict[key]["max_parental_hom_ref_PL"] = max_parental_hom_ref_PL
-            dnm_features_dict[key]["min_parental_hom_ref_PL"] = min_parental_hom_ref_PL
-            dnm_features_dict[key]["offspring_dnm_PL"] = offspring_dnm_PL
-            dnm_features_dict[key]["offspring_hom_ref_PL"] = offspring_hom_ref_PL
-            dnm_features_dict[key]["max_parental_GQ"] = max_parental_GQ
-            dnm_features_dict[key]["min_parental_GQ"] = min_parental_GQ
-            dnm_features_dict[key]["offspring_GQ"] = offspring_GQ
+            for feature, feature_dict in format_features_dict.items():
+                if vcf_header.formats[feature].number == 1:
+                    dnm_features_dict[key]["{}_{}".format("offspring", feature)] = feature_dict["offspring_value"]
+                    dnm_features_dict[key]["{}_{}".format("father", feature)] = feature_dict["father_value"]
+                    dnm_features_dict[key]["{}_{}".format("mother", feature)] = feature_dict["mother_value"]
+                elif vcf_header.formats[feature].number == "G": # There's a single value for each genotype (so 3 total)
+                    dnm_features_dict[key]["{}_{}_0".format("offspring", feature)] = feature_dict["offspring_value"][0]
+                    dnm_features_dict[key]["{}_{}_1".format("offspring", feature)] = feature_dict["offspring_value"][1]
+                    dnm_features_dict[key]["{}_{}_2".format("offspring", feature)] = feature_dict["offspring_value"][2]
+                    dnm_features_dict[key]["{}_{}_0".format("father", feature)] = feature_dict["father_value"][0]
+                    dnm_features_dict[key]["{}_{}_1".format("father", feature)] = feature_dict["father_value"][1]
+                    dnm_features_dict[key]["{}_{}_2".format("father", feature)] = feature_dict["father_value"][2]
+                    dnm_features_dict[key]["{}_{}_0".format("mother", feature)] = feature_dict["mother_value"][0]
+                    dnm_features_dict[key]["{}_{}_1".format("mother", feature)] = feature_dict["mother_value"][1]
+                    dnm_features_dict[key]["{}_{}_2".format("mother", feature)] = feature_dict["mother_value"][2]
+                elif vcf_header.formats[feature].number == "R": # There's a single value for each allele type (so 2 total)
+                    dnm_features_dict[key]["{}_{}_0".format("offspring", feature)] = feature_dict["offspring_value"][0]
+                    dnm_features_dict[key]["{}_{}_1".format("offspring", feature)] = feature_dict["offspring_value"][1]
+                    dnm_features_dict[key]["{}_{}_0".format("father", feature)] = feature_dict["father_value"][0]
+                    dnm_features_dict[key]["{}_{}_1".format("father", feature)] = feature_dict["father_value"][1]
+                    dnm_features_dict[key]["{}_{}_0".format("mother", feature)] = feature_dict["mother_value"][0]
+                    dnm_features_dict[key]["{}_{}_1".format("mother", feature)] = feature_dict["mother_value"][1]
 
             # Add INFO-level features
             # dnm_features_dict[key] |= dnm_info_features
             dnm_features_dict[key].update(dnm_info_features)
 
     return dnm_features_dict
+
+
+def postprocess_df(df_filepath, features_file, vcf_filepath):
+    function_dispatcher = {
+            "get_ratio": get_ratio,
+            "get_log2_ratio": get_log2_ratio
+            }
+
+    vcf_header = pysam.VariantFile(vcf_filepath, mode = "r").header
+    df = pd.read_csv(df_filepath, sep = "\t")
+    # Read the features file to get the format-level features. Keep the offspring values, apply some functions (min, max) to the parents' values.
+    info_features = None
+    format_features = None
+    custom_features = None
+    with open(features_file, "r") as f:
+        info_features = f.readline().replace(" ", "").strip().split(",")
+        format_features = f.readline().replace(" ", "").strip().split(",")
+        for line in f: # Parse the custom features now 
+            custom_features.append(line.replace(" ", "").strip())
+    for format_feature in format_features:
+        if vcf_header.formats[format_feature].number == 1:
+            df["min_parent_{}".format(format_feature)] = df[["father_{}".format(format_feature), "mother_{}".format(format_feature)]].min(axis = 1)
+            df["max_parent_{}".format(format_feature)] = df[["father_{}".format(format_feature), "mother_{}".format(format_feature)]].max(axis = 1)
+        elif vcf_header.formats[format_feature].number == "G":
+            for i in range(0, 3):
+                df["min_parent_{}_{}".format(format_feature, str(i))] = df[["father_{}_{}".format(format_feature, str(i)), "mother_{}_{}".format(format_feature, str(i))]].min(axis = 1)
+                df["max_parent_{}_{}".format(format_feature, str(i))] = df[["father_{}_{}".format(format_feature, str(i)), "mother_{}_{}".format(format_feature, str(i))]].max(axis = 1)
+        elif vcf_header.formats[format_feature].number == "R":
+            for i in range(0, 1):
+                df["min_parent_{}_{}".format(format_feature, str(i))] = df[["father_{}_{}".format(format_feature, str(i)), "mother_{}_{}".format(format_feature, str(i))]].min(axis = 1)
+                df["max_parent_{}_{}".format(format_feature, str(i))] = df[["father_{}_{}".format(format_feature, str(i)), "mother_{}_{}".format(format_feature, str(i))]].max(axis = 1)
+    # Use the function dispatch for custom features now
+    for custom_feature in custom_features:
+        regex_match = re.match("(^\w+):(int|float)=(\w+)\(\w+\)", custom_feature)
+        feature_name = regex_match.group(1)
+        return_type = regex_match.group(2)
+        function_name = regex_match.group(3)
+        input_feature_name = regex_match.group(4)
+        df["offspring_{}".format(feature_name)] = df[input_feature_name
+                # To do: put this in feature_extraction code
+                # So feature extraction code will get offspring_AR, father_AR, mother_AR
+                # Then we'll also get min_parent_AR, max_parent_AR in the postprocessing step
+    return df
 
 """
 pedigree_dict, offspring_parents_dict, sample_sex_and_phenotype_dict = make_pedigree_dicts("tutorial.ped")
