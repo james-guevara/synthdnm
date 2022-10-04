@@ -13,10 +13,12 @@ from extract_features import make_pedigree_dicts
 from extract_features import make_sample_index_dicts
 from extract_features import make_offspring_index_dict
 from extract_features import make_features_dict 
+from extract_features import make_func_name_dict 
 from extract_features import postprocess_df 
-from swap_pedigree import swap_pedigree
 from make_private_vcf import make_private_vcf
+from swap_pedigree import swap_pedigree
 from training import train_snv_classifier
+import sys
 
 # todo: provide default feature files for standard VCF formats (GATK, DeepVariant...), allow for making feature file
 # Motivation behind using rare, inherited variants: chances of 0/1 parent 0/1 child in only one family being false positive is very low. (do naive probability calculation) vs. if it's a common variant (present in many families). So chances are the rare, inherited  variant is genotyped correctly is relatively high
@@ -29,11 +31,18 @@ from training import train_snv_classifier
 
 def run_classify(args):
     pedigree_dict, offspring_parents_dict, sample_sex_and_phenotype_dict = make_pedigree_dicts(args.ped_file)
+
     sample_index_dict, index_sample_dict = make_sample_index_dicts(args.vcf_file)
     offspring_index_id_dict = make_offspring_index_dict(offspring_parents_dict, sample_index_dict)
 
+    func_name_dict = make_func_name_dict()
     # Extract features 
-    dnm_features_dict = make_features_dict(args.vcf_file, offspring_index_id_dict, offspring_parents_dict, sample_index_dict, args.features_file)
+    # dnm_features_dict = make_features_dict(args.vcf_file, offspring_index_id_dict, offspring_parents_dict, sample_index_dict, args.features_file)
+    df_dnm_features_dict = make_features_dict(args.vcf_file, offspring_index_id_dict, offspring_parents_dict, sample_index_dict, func_name_dict, args.features_file)
+    print(df_dnm_features_dict)
+
+    sys.exit()
+
     df_dnm_features_dict = pd.DataFrame.from_dict(dnm_features_dict).transpose().reset_index()
     df_dnm_features_dict = df_dnm_features_dict.rename(columns = {"level_0": "chrom", "level_1": "pos", "level_2": "ref", "level_3": "alt", "level_4": "iid"})
     df_dnm_features_dict.to_csv("df_dnm_features_dict_testing.tsv", sep = "\t", index = False)
