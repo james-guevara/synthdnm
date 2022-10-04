@@ -14,7 +14,6 @@ from extract_features import make_sample_index_dicts
 from extract_features import make_offspring_index_dict
 from extract_features import make_features_dict 
 from extract_features import make_func_name_dict 
-from extract_features import postprocess_df 
 from make_private_vcf import make_private_vcf
 from swap_pedigree import swap_pedigree
 from training import train_snv_classifier
@@ -37,19 +36,10 @@ def run_classify(args):
 
     func_name_dict = make_func_name_dict()
     # Extract features 
-    # dnm_features_dict = make_features_dict(args.vcf_file, offspring_index_id_dict, offspring_parents_dict, sample_index_dict, args.features_file)
     df_dnm_features_dict = make_features_dict(args.vcf_file, offspring_index_id_dict, offspring_parents_dict, sample_index_dict, func_name_dict, args.features_file)
-    print(df_dnm_features_dict)
 
-    sys.exit()
-
-    df_dnm_features_dict = pd.DataFrame.from_dict(dnm_features_dict).transpose().reset_index()
-    df_dnm_features_dict = df_dnm_features_dict.rename(columns = {"level_0": "chrom", "level_1": "pos", "level_2": "ref", "level_3": "alt", "level_4": "iid"})
+    # df_dnm_features_dict = pd.DataFrame.from_dict(dnm_features_dict).transpose().reset_index()
     df_dnm_features_dict.to_csv("df_dnm_features_dict_testing.tsv", sep = "\t", index = False)
-
-    # We want to generate some post-processed features given the format features
-    df_dnm_features_postprocess = postprocess_df("df_dnm_features_dict_testing.tsv", args.features_file, args.vcf_file)
-    df_dnm_features_postprocess.to_csv("df_dnm_features_dict_testing_postprocess.tsv", sep = "\t", index = False)
 
     # Run classifiers...
 
@@ -58,7 +48,9 @@ def run_train(args):
     pedigree_dict, offspring_parents_dict, sample_sex_and_phenotype_dict = make_pedigree_dicts(args.ped_file)
     sample_index_dict, index_sample_dict = make_sample_index_dicts(args.vcf_file)
     offspring_index_id_dict = make_offspring_index_dict(offspring_parents_dict, sample_index_dict)
+
     # Creating the swapped pedigree file
+
     swapped_pedigree_dict = swap_pedigree(pedigree_dict)
     swapped_pedigree_output_file = "{}_swapped.ped".format(Path(args.ped_file).stem)
     with open(swapped_pedigree_output_file, "w") as f:
@@ -76,14 +68,10 @@ def run_train(args):
 
     # Extract features using the swapped pedigree file and the private, inherited VCF 
     dnm_features_dict_truth1 = make_features_dict("private.vcf.gz", offspring_index_id_dict, swapped_offspring_parents_dict, sample_index_dict)
-    df_dnm_features_dict = pd.DataFrame.from_dict(dnm_features_dict_truth1).transpose().reset_index()
-    df_dnm_features_dict = df_dnm_features_dict.rename(columns = {"level_0": "chrom", "level_1": "pos", "level_2": "id", "level_3": "ref", "level_4": "alt", "level_5": "iid"})
     df_dnm_features_dict["truth"] = 1 # These swapped variants will be our true positives
 
     # For false positives, use the original pedigree file with
     dnm_features_dict_truth0 = make_features_dict(args.vcf_file, offspring_index_id_dict, offspring_parents_dict, sample_index_dict)
-    df_dnm_features_dict_truth0 = pd.DataFrame.from_dict(dnm_features_dict_truth0).transpose().reset_index()
-    df_dnm_features_dict_truth0 = df_dnm_features_dict_truth0.rename(columns = {"level_0": "chrom", "level_1": "pos", "level_2": "id", "level_3": "ref", "level_4": "alt", "level_5": "iid"})
     df_dnm_features_dict_truth0["truth"] = 0
 
     df_dnm_features_concat = pd.concat([df_dnm_features_dict, df_dnm_features_dict_truth0])
@@ -91,7 +79,7 @@ def run_train(args):
 
     # Train machine learning models with default parameters (by default)
     # User can use grid search mode to perform grid search to find optimal training parameters
-    train_snv_classifier("df_dnm_features_dict_priv.tsv")
+    # train_snv_classifier("df_dnm_features_dict_priv.tsv")
 
 
 
