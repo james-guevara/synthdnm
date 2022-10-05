@@ -37,14 +37,12 @@ def run_classify(args):
     func_name_dict = make_func_name_dict()
     # Extract features 
     df_dnm_features_dict = make_features_dict(args.vcf_file, offspring_index_id_dict, offspring_parents_dict, sample_index_dict, func_name_dict, args.features_file, args.region)
-
-    # df_dnm_features_dict = pd.DataFrame.from_dict(dnm_features_dict).transpose().reset_index()
     df_dnm_features_dict.to_csv("df_dnm_features_dict_testing.tsv", sep = "\t", index = False)
 
     # Run classifiers...
 
 
-def run_train(args):
+def run_make_training_set(args):
     pedigree_dict, offspring_parents_dict, sample_sex_and_phenotype_dict = make_pedigree_dicts(args.ped_file)
     sample_index_dict, index_sample_dict = make_sample_index_dicts(args.vcf_file)
     offspring_index_id_dict = make_offspring_index_dict(offspring_parents_dict, sample_index_dict)
@@ -74,15 +72,12 @@ def run_train(args):
     df_dnm_features_dict_truth0 = make_features_dict(args.vcf_file, offspring_index_id_dict, offspring_parents_dict, sample_index_dict, func_name_dict, args.features_file, args.region)
     df_dnm_features_dict_truth0["truth"] = 0
 
-
     df_dnm_features_concat = pd.concat([df_dnm_features_dict_truth1, df_dnm_features_dict_truth0])
     df_dnm_features_concat.to_csv("df_dnm_features_dict_priv.tsv", sep = "\t", index = False)
 
     # Train machine learning models with default parameters (by default)
     # User can use grid search mode to perform grid search to find optimal training parameters
     # train_snv_classifier("df_dnm_features_dict_priv.tsv")
-
-
 
 # There are 2 modes to synthdnm: classify mode and train mode
 # Classify mode consists of:
@@ -106,7 +101,7 @@ parser_classify.set_defaults(func = run_classify)
 
 # "make_training_set" mode arguments
 parser_train = subparsers.add_parser("make_training_set", help = "Make training set.")
-parser_train.set_defaults(func = run_train)
+parser_train.set_defaults(func = run_make_training_set)
 
 # Arguments common to both modes:
 parser.add_argument("--vcf_file", help = "VCF file input", required = True)
@@ -121,6 +116,6 @@ args.func(args)
 
 """
 To do:
-    1. Allow for intervals.
-    1. Change name of private.vcf file (to match the input VCF filename but with "private" appended).
+    1. If feature file isn't specified, then extract all the INFO features and FORMAT features using the VCF header, as well as the "default" CUSTOM features.
+    2. Change name of private.vcf file (to match the input VCF filename but with "private" appended).
 """
