@@ -67,7 +67,7 @@ def make_func_name_dict():
     return func_name_dict
 
 # Extract putative de novo mutations from the VCF
-def make_features_dict(vcf_filepath, offspring_index_id_dict, offspring_parents_dict, sample_index_dict, func_name_dict, features_file = None):
+def make_features_dict(vcf_filepath, offspring_index_id_dict, offspring_parents_dict, sample_index_dict, func_name_dict, features_file = None, region = None):
     dnm_features_dict = {}
 
     header_id = "\t".join(["chrom", "pos", "ref", "alt", "iid", "offspring_GT", "father_GT", "mother_GT"])
