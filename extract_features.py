@@ -169,12 +169,14 @@ def make_features_dict(vcf_filepath, offspring_index_id_dict, offspring_parents_
             df_dnm_features_dict["max_parent_{}".format(feature)] = df_dnm_features_dict[["father_{}".format(feature), "mother_{}".format(feature)]].max(axis = 1)
         elif format_feature_types_table[feature] == "G": # 1 value per each possible genotype (so 3 per individual) 
             for i in range(0, 3):
+                df_dnm_features_dict["offspring_{}_{}".format(feature, str(i))] = df_dnm_features_dict["offspring_{}".format(feature)].str.get(i)
                 df_dnm_features_dict["father_{}_{}".format(feature, str(i))] = df_dnm_features_dict["father_{}".format(feature)].str.get(i)
                 df_dnm_features_dict["mother_{}_{}".format(feature, str(i))] = df_dnm_features_dict["mother_{}".format(feature)].str.get(i)
                 df_dnm_features_dict["min_parent_{}_{}".format(feature, str(i))] = df_dnm_features_dict[["father_{}_{}".format(feature, str(i)), "mother_{}_{}".format(feature, str(i))]].min(axis = 1)
                 df_dnm_features_dict["max_parent_{}_{}".format(feature, str(i))] = df_dnm_features_dict[["father_{}_{}".format(feature, str(i)), "mother_{}_{}".format(feature, str(i))]].max(axis = 1)
         elif format_feature_types_table[feature] == "R": # 1 value per each possible genotype (so 3 per individual) 
             for i in range(0, 2):
+                df_dnm_features_dict["offspring_{}_{}".format(feature, str(i))] = df_dnm_features_dict["offspring_{}".format(feature)].str.get(i)
                 df_dnm_features_dict["father_{}_{}".format(feature, str(i))] = df_dnm_features_dict["father_{}".format(feature)].str.get(i)
                 df_dnm_features_dict["mother_{}_{}".format(feature, str(i))] = df_dnm_features_dict["mother_{}".format(feature)].str.get(i)
                 df_dnm_features_dict["min_parent_{}_{}".format(feature, str(i))] = df_dnm_features_dict[["father_{}_{}".format(feature, str(i)), "mother_{}_{}".format(feature, str(i))]].min(axis = 1)
@@ -184,8 +186,31 @@ def make_features_dict(vcf_filepath, offspring_index_id_dict, offspring_parents_
         df_dnm_features_dict["min_parent_{}".format(feature)] = df_dnm_features_dict[["father_{}".format(feature), "mother_{}".format(feature)]].min(axis = 1)
         df_dnm_features_dict["max_parent_{}".format(feature)] = df_dnm_features_dict[["father_{}".format(feature), "mother_{}".format(feature)]].max(axis = 1)
 
-    # Probably should remove unncessary features, but keeping them for now.
-    # Also get feature types directly from header
+    # Only retaining necessary features now...
+    retained_features = []
+    for feature in info_features: retained_features.append(feature)
+    for feature in format_features:
+        if format_feature_types_table[feature] == 1: 
+            retained_features.append("{}_{}".format("offspring", feature))
+            retained_features.append("{}_{}".format("max_parent", feature))
+            retained_features.append("{}_{}".format("min_parent", feature))
+        elif format_feature_types_table[feature] == "G": # 1 value per each possible genotype (so 3 per individual) 
+            for i in range(0, 3):
+                retained_features.append("{}_{}_{}".format("offspring", feature, i))
+                retained_features.append("{}_{}_{}".format("max_parent", feature, i))
+                retained_features.append("{}_{}_{}".format("min_parent", feature, i))
+        elif format_feature_types_table[feature] == "R": # 1 value per each possible genotype (so 3 per individual) 
+            for i in range(0, 2):
+                retained_features.append("{}_{}_{}".format("offspring", feature, i))
+                retained_features.append("{}_{}_{}".format("max_parent", feature, i))
+                retained_features.append("{}_{}_{}".format("min_parent", feature, i))
+    for feature in custom_features:
+            retained_features.append("{}_{}".format("offspring", feature))
+            retained_features.append("{}_{}".format("max_parent", feature))
+            retained_features.append("{}_{}".format("min_parent", feature))
+
     df_dnm_features_dict = df_dnm_features_dict.rename(columns = {"level_0": "chrom", "level_1": "pos", "level_2": "ref", "level_3": "alt", "level_4": "iid"})
+    key = ["chrom", "pos", "ref", "alt", "iid"]
+    df_dnm_features_dict = df_dnm_features_dict[key + retained_features]
     return df_dnm_features_dict
 

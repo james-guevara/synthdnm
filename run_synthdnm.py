@@ -50,7 +50,6 @@ def run_train(args):
     offspring_index_id_dict = make_offspring_index_dict(offspring_parents_dict, sample_index_dict)
 
     # Creating the swapped pedigree file
-
     swapped_pedigree_dict = swap_pedigree(pedigree_dict)
     swapped_pedigree_output_file = "{}_swapped.ped".format(Path(args.ped_file).stem)
     with open(swapped_pedigree_output_file, "w") as f:
@@ -66,15 +65,17 @@ def run_train(args):
     # Make VCF of private (in 1 family), inherited variants
     make_private_vcf(args.vcf_file, pedigree_dict, sample_index_dict)
 
+    func_name_dict = make_func_name_dict()
     # Extract features using the swapped pedigree file and the private, inherited VCF 
-    dnm_features_dict_truth1 = make_features_dict("private.vcf.gz", offspring_index_id_dict, swapped_offspring_parents_dict, sample_index_dict)
-    df_dnm_features_dict["truth"] = 1 # These swapped variants will be our true positives
-
-    # For false positives, use the original pedigree file with
-    dnm_features_dict_truth0 = make_features_dict(args.vcf_file, offspring_index_id_dict, offspring_parents_dict, sample_index_dict)
+    df_dnm_features_dict_truth1 = make_features_dict("private.vcf.gz", offspring_index_id_dict, swapped_offspring_parents_dict, sample_index_dict, func_name_dict, args.features_file)
+    df_dnm_features_dict_truth1["truth"] = 1 # These swapped variants will be our true positives
+    
+    # For false positives, use the original pedigree file
+    df_dnm_features_dict_truth0 = make_features_dict(args.vcf_file, offspring_index_id_dict, offspring_parents_dict, sample_index_dict, func_name_dict, args.features_file)
     df_dnm_features_dict_truth0["truth"] = 0
 
-    df_dnm_features_concat = pd.concat([df_dnm_features_dict, df_dnm_features_dict_truth0])
+
+    df_dnm_features_concat = pd.concat([df_dnm_features_dict_truth1, df_dnm_features_dict_truth0])
     df_dnm_features_concat.to_csv("df_dnm_features_dict_priv.tsv", sep = "\t", index = False)
 
     # Train machine learning models with default parameters (by default)
@@ -107,11 +108,13 @@ parser_classify.set_defaults(func = run_classify)
 parser_train = subparsers.add_parser("train", help = "Train classifiers by making synthetic DNMs.")
 parser_train.set_defaults(func = run_train)
 
+# Arguments common to both modes:
 parser.add_argument("--vcf_file", help = "VCF file input", required = True)
 parser.add_argument("--ped_file", help = "Pedigree file (.fam/.ped/.psam) input", required = True)
+# parser.add_argument("--swapped_ped_file", help = "Pre-existing swapped pedigree file", required = True)
+# parser.add_argument("--interval", help = "Interval ('{}' or '{}:{}-{}' in format of chr or chr:start-end) on which to run training or classification", required = True)
 parser.add_argument("--features_file", help = "Features file input")
 parser.add_argument("--output_folder", help = "Output folder for output files (if not used, then output folder is set to 'synthdnm_output')")
 
 args = parser.parse_args()
-
 args.func(args)
