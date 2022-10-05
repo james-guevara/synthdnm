@@ -1,6 +1,6 @@
 # synthdnm
 ## To do
-- [ ] Add --regions argument
+- [x] Add --regions argument
 - [ ] Allow user to run synthdnm without --features_file argument (which should then try to extract all possible featurs using the VCF header)
 - [ ] Sex chromosomes
 - [ ] SVs
