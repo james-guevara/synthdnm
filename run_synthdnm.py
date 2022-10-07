@@ -79,43 +79,66 @@ def run_make_training_set(args):
     # User can use grid search mode to perform grid search to find optimal training parameters
     # train_snv_classifier("df_dnm_features_dict_priv.tsv")
 
-# There are 2 modes to synthdnm: classify mode and train mode
-# Classify mode consists of:
-#   - feature extraction
-#   - classification
-# Train mode consists of:
-#   - create swapped pedigree file
-#   - create private (inherited) VCF file
-#   - make synthetic de novos by extracting features from the private (inherited) VCF file using the swapped pedigrees, which will be the true positive de novos in the training set
-#   - using the original putative de novos as FPs in our training set (or randomly sample them) 
-#   - train SNV and indel classifiers on these datasets
+def train(args):
+    # The key is always 5 elements: ["chrom", "pos", "ref", "alt", "iid"]
+    key = ["chrom", "pos", "ref", "alt", "iid"]
+    # So, train on the other elements, but get column names first...
+    # df_train = pd.read_csv(args.training_set_tsv, sep = "\t").drop(key, axis = 1)
+    df_train = pd.read_csv(args.training_set_tsv, sep = "\t")
+    df_snv_train = df_train[( mask := (df_train["ref"].str.len() == 1) & (df_train["alt"].str.len() == 1) )]
+    df_indel_train = df_train[~mask]
+    # Handle sex chromosomes...
 
+    # How to ensure that column names are in correct order? 
+
+"""
+There are 3 modes to synthdnm: classify mode, make_training_set mode, and train mode
+classify mode consists of:
+  - feature extraction
+  - classification
+make_training_set mode consists of:
+  - create swapped pedigree file
+  - create private (inherited) VCF file
+  - make synthetic de novos by extracting features from the private (inherited) VCF file using the swapped pedigrees, which will be the true positive de novos in the training set
+  - using the original putative de novos as FPs in our training set (or randomly sample them) 
+train mode consists of:
+  - train SNV and indel classifiers on datasets (obtained using make_training_set mode) 
+"""
 
 parser = argparse.ArgumentParser(description = "SynthDNM: a de novo mutation classifier and training paradigm")
 subparsers = parser.add_subparsers(help = "Available sub-commands")
 
-# "Classify" mode arguments
+# "classify" mode arguments
 parser_classify = subparsers.add_parser("classify", help = "Classify DNMs using pre-trained classifiers.")
 # parser_classify.add_argument("--clf_folder", help = "Folder that contains the classifiers, which must be in .pkl format (if not specified, will look for them in the default data folder)")
 parser_classify.set_defaults(func = run_classify)
 
 # "make_training_set" mode arguments
-parser_train = subparsers.add_parser("make_training_set", help = "Make training set.")
-parser_train.set_defaults(func = run_make_training_set)
+parser_make_training_set = subparsers.add_parser("make_training_set", help = "Make training set.")
+parser_make_training_set.set_defaults(func = run_make_training_set)
+
+# "train" mode arguments
+"""
+Should add training file as optional argument? (with parameters to use?)
+"""
+parser_train = subparsers.add_parser("train", help = "Train classifiers")
+parser_train.set_defaults(func = train)
 
 # Arguments common to both modes:
-parser.add_argument("--vcf_file", help = "VCF file input", required = True)
+# parser.add_argument("--vcf_file", help = "VCF file input", required = True)
+parser.add_argument("--vcf_file", help = "VCF file input", required = "classify" in sys.argv or "make_training_set" in sys.argv)
 parser.add_argument("--ped_file", help = "Pedigree file (.fam/.ped/.psam) input", required = True)
 # parser.add_argument("--swapped_ped_file", help = "Pre-existing swapped pedigree file", required = True)
 parser.add_argument("--region", help = "Interval ('{}' or '{}:{}-{}' in format of chr or chr:start-end) on which to run training or classification")
 parser.add_argument("--features_file", help = "Features file input")
 parser.add_argument("--output_folder", help = "Output folder for output files (if not used, then output folder is set to 'synthdnm_output')")
+parser.add_argument("--training_set_tsv", help = "Training set file (created using make_training_set mode)", required = "train" in sys.argv)
 
 args = parser.parse_args()
 args.func(args)
 
 """
 To do:
-    1. If feature file isn't specified, then extract all the INFO features and FORMAT features using the VCF header, as well as the "default" CUSTOM features.
+    1. Add train argument
     2. Change name of private.vcf file (to match the input VCF filename but with "private" appended).
 """

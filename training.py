@@ -5,8 +5,14 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import RandomizedSearchCV
 import sys
 
-
 def train_snv_classifier(features_table_filepath):
+    df = pd.read_csv(features_table_filepath, sep = "\t")
+    #key = ["chrom", "pos", "ref", "alt", "iid"]
+
+    #df_snv = pd.read_csv(args.training_set_tsv, sep = "\t").drop(key, axis = 1)
+
+
+def train_snv_classifier_old(features_table_filepath):
     # Get features 
     # Assume that the first N columns (6 or so?) will be ID information. The final column will be the truth column.
     df_train = pd.read_csv("df_dnm_features_dict_priv.tsv", sep = "\t").iloc[:, 12:]

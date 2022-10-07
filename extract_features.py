@@ -77,14 +77,24 @@ def make_features_dict(vcf_filepath, offspring_index_id_dict, offspring_parents_
 
     info_features = []
     format_features = []
-    custom_feature_lines = []
+    custom_features = []
+    custom_feature_function_dict = {}
+    custom_feature_input_dict = {}
     if features_file: 
         with open(features_file, "r") as f:
             # Check that these features exist in the header...
             info_features = f.readline().replace(" ", "").strip().split(",")
             format_features = f.readline().replace(" ", "").strip().split(",")
             for line in f:
-                custom_feature_lines.append(line.rstrip())
+                regex_match = re.match("(^\w+):(int|float)=(\w+)\((\w+)\)", line.rstrip().replace(" ", ""))
+                feature_name = regex_match.group(1)
+                return_type = regex_match.group(2)
+                function_name = regex_match.group(3)
+                input_feature_name = regex_match.group(4)
+                func = func_name_dict[function_name]
+                custom_feature_function_dict[feature_name] = func
+                custom_feature_input_dict[feature_name] = input_feature_name
+                # custom_feature_lines.append(line.rstrip())
     else:
         # Default features to extract
         for info_field in vcf_iterator.header.info:
@@ -94,6 +104,13 @@ def make_features_dict(vcf_filepath, offspring_index_id_dict, offspring_parents_
         for format_field in vcf_iterator.header.formats:
             if format_field == "GT": continue
             format_features.append(format_field)
+        if "AD" in format_features:
+            custom_features.append("AR")
+            custom_feature_function_dict["AR"] = func_name_dict["get_ratio"]
+            custom_feature_input_dict["AR"] = "AD" 
+            custom_features.append("AD_log2_coverage_ratio")
+            custom_feature_function_dict["AD_log2_coverage_ratio"] = func_name_dict["get_log2_ratio"]
+            custom_feature_input_dict["AD_log2_coverage_ratio"] = "AD" 
         # info_features = ["VQSLOD", "ClippingRankSum", "BaseQRankSum", "FS", "SOR", "MQ", "MQRankSum", "QD", "ReadPosRankSum"]
         # format_features = ["AD", "DP", "GQ", "PL"]
 
@@ -102,14 +119,9 @@ def make_features_dict(vcf_filepath, offspring_index_id_dict, offspring_parents_
     # When we get the format-level features, we want to determine what types (of numbers) they are using the VCF header.
     # If a particular format feature is single-valued (1), then we'll get 3 values for it (for offspring, mother, father).
     # If a particular format feature has one value for each possible genotype ("G"), then we'll get 3 values per sample (and so 9 total for a trio pedigree).
+    # For each format feature, get the offspring and their parents' values
     format_features_dict = {}
     vcf_header = vcf_iterator.header
-
-    # Get each format feature's type (could be one of: 1, "G", "R")
-    format_feature_types_table = {} # Might be redundant/unnecessary
-    for format_feature in format_features: format_feature_types_table[format_feature] = vcf_header.formats[format_feature].number
-
-    # For each format feature, get the offspring and their parents' values
     for record in vcf_iterator:
         # Skip multiallelic variants
         if len(record.alts) > 1: continue
@@ -152,27 +164,21 @@ def make_features_dict(vcf_filepath, offspring_index_id_dict, offspring_parents_
             # dnm_features_dict[key] |= dnm_info_features
             dnm_features_dict[key].update(dnm_info_features)
 
-    custom_features = []
+
+    # custom_features = []
     df_dnm_features_dict = pd.DataFrame.from_dict(dnm_features_dict).transpose().reset_index() 
-    for custom_feature_line in custom_feature_lines:
-        regex_match = re.match("(^\w+):(int|float)=(\w+)\((\w+)\)", custom_feature_line.replace(" ", ""))
-        feature_name = regex_match.group(1)
-        custom_features.append(feature_name)
-        return_type = regex_match.group(2)
-        function_name = regex_match.group(3)
-        input_feature_name = regex_match.group(4)
-        func = func_name_dict[function_name]
+    for feature_name in custom_features:
+        func = custom_feature_function_dict[feature_name]
+        input_feature_name = custom_feature_input_dict[feature_name]
         df_dnm_features_dict["offspring_{}".format(feature_name)] = df_dnm_features_dict["offspring_{}".format(input_feature_name)].apply(func)
         df_dnm_features_dict["father_{}".format(feature_name)] = df_dnm_features_dict["father_{}".format(input_feature_name)].apply(func)
         df_dnm_features_dict["mother_{}".format(feature_name)] = df_dnm_features_dict["mother_{}".format(input_feature_name)].apply(func)
-    
+
     # Get min and max of format features
     for feature in format_features:
-        # if format_feature_types_table[feature] == 1: # scalar feature
         if vcf_header.formats[feature].number == 1:
             df_dnm_features_dict["min_parent_{}".format(feature)] = df_dnm_features_dict[["father_{}".format(feature), "mother_{}".format(feature)]].min(axis = 1)
             df_dnm_features_dict["max_parent_{}".format(feature)] = df_dnm_features_dict[["father_{}".format(feature), "mother_{}".format(feature)]].max(axis = 1)
-        # elif format_feature_types_table[feature] == "G": # 1 value per each possible genotype (so 3 per individual) 
         elif vcf_header.formats[feature].number == "G":
             for i in range(0, 3):
                 df_dnm_features_dict["offspring_{}_{}".format(feature, str(i))] = df_dnm_features_dict["offspring_{}".format(feature)].str.get(i)
@@ -180,7 +186,6 @@ def make_features_dict(vcf_filepath, offspring_index_id_dict, offspring_parents_
                 df_dnm_features_dict["mother_{}_{}".format(feature, str(i))] = df_dnm_features_dict["mother_{}".format(feature)].str.get(i)
                 df_dnm_features_dict["min_parent_{}_{}".format(feature, str(i))] = df_dnm_features_dict[["father_{}_{}".format(feature, str(i)), "mother_{}_{}".format(feature, str(i))]].min(axis = 1)
                 df_dnm_features_dict["max_parent_{}_{}".format(feature, str(i))] = df_dnm_features_dict[["father_{}_{}".format(feature, str(i)), "mother_{}_{}".format(feature, str(i))]].max(axis = 1)
-        # elif format_feature_types_table[feature] == "R": # 1 value per each possible genotype (so 3 per individual) 
         elif vcf_header.formats[feature].number == "R":
             for i in range(0, 2):
                 df_dnm_features_dict["offspring_{}_{}".format(feature, str(i))] = df_dnm_features_dict["offspring_{}".format(feature)].str.get(i)
@@ -197,18 +202,15 @@ def make_features_dict(vcf_filepath, offspring_index_id_dict, offspring_parents_
     retained_features = []
     for feature in info_features: retained_features.append(feature)
     for feature in format_features:
-        # if format_feature_types_table[feature] == 1: 
         if vcf_header.formats[feature].number == 1:
             retained_features.append("{}_{}".format("offspring", feature))
             retained_features.append("{}_{}".format("max_parent", feature))
             retained_features.append("{}_{}".format("min_parent", feature))
-        # elif format_feature_types_table[feature] == "G": # 1 value per each possible genotype (so 3 per individual) 
         elif vcf_header.formats[feature].number == "G":
             for i in range(0, 3):
                 retained_features.append("{}_{}_{}".format("offspring", feature, i))
                 retained_features.append("{}_{}_{}".format("max_parent", feature, i))
                 retained_features.append("{}_{}_{}".format("min_parent", feature, i))
-        # elif format_feature_types_table[feature] == "R": # 1 value per each possible genotype (so 3 per individual) 
         elif vcf_header.formats[feature].number == "R":
             for i in range(0, 2):
                 retained_features.append("{}_{}_{}".format("offspring", feature, i))
