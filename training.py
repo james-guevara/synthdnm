@@ -5,66 +5,44 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import RandomizedSearchCV
 import sys
 
-def train_snv_classifier(features_table_filepath):
-    df = pd.read_csv(features_table_filepath, sep = "\t")
-    #key = ["chrom", "pos", "ref", "alt", "iid"]
+def train_random_forest_classifier(df_input,
+        n_estimators = 125,
+        criterion = "gini",
+        max_depth = 450,
+        min_samples_split = 2,
+        min_samples_leaf = 1,
+        min_weight_fraction_leaf = 0.0,
+        max_features = "sqrt",
+        max_leaf_nodes = None,
+        class_weight = "balanced",
+        random_state = 42,
+        n_jobs = -1,
+        verbose = 1):
 
-    #df_snv = pd.read_csv(args.training_set_tsv, sep = "\t").drop(key, axis = 1)
+    key = ["chrom", "pos", "ref", "alt", "iid"]
+    df = df_input.drop(key, axis = 1)
+    features_list = list(df.columns)
 
-
-def train_snv_classifier_old(features_table_filepath):
-    # Get features 
-    # Assume that the first N columns (6 or so?) will be ID information. The final column will be the truth column.
-    df_train = pd.read_csv("df_dnm_features_dict_priv.tsv", sep = "\t").iloc[:, 12:]
-    df_train["ClippingRankSum"] = 0
-    
-    clf_snv = RandomForestClassifier(
-            n_estimators = 125,
-            max_features = "auto",
-            max_depth = 450,
-            min_samples_split = 2,
-            min_samples_leaf = 1,
-            min_weight_fraction_leaf = 0.0,
-            max_leaf_nodes = None,
-            n_jobs = -1,
-            class_weight = "balanced",
-            random_state = 42,
-            verbose = 0
+    clf = RandomForestClassifier(
+            n_estimators = n_estimators,
+            criterion = criterion,
+            max_depth = max_depth,
+            min_samples_split = min_samples_split,
+            min_samples_leaf = min_samples_leaf,
+            min_weight_fraction_leaf = min_weight_fraction_leaf,
+            max_features = max_features,
+            max_leaf_nodes = max_leaf_nodes,
+            class_weight = class_weight,
+            random_state = random_state,
+            n_jobs = n_jobs,
+            verbose = verbose
             )
-    clf_snv.fit(df_train.values[:, :-1], df_train.values[:, -1])
 
-def train_indel_classifier(features_table_filepath):
-    # Get features 
-    # Assume that the first N columns (6 or so?) will be ID information. The final column will be the truth column.
-    df_train = pd.read_csv("df_dnm_features_dict_priv.tsv", sep = "\t").iloc[:, 12:]
-    df_train["ClippingRankSum"] = 0
+    clf.fit(df.values[:, 0:-1], df.values[:, -1])
+    return clf
+    # joblib.dump(clf_snv, "clf_snv_test.pkl")
 
-    clf_indel = RandomForestClassifier(
-            n_estimators = 125,
-            max_features = "auto",
-            max_depth = 450,
-            min_samples_split = 2,
-            min_samples_leaf = 1,
-            min_weight_fraction_leaf = 0.0,
-            max_leaf_nodes = None,
-            n_jobs = -1,
-            class_weight = "balanced",
-            random_state = 42,
-            verbose = 0
-            )
-    clf_indel.fit(df_train.values[:, :-1], df_train.values[:, -1])
 
-"""
-df_train = pd.read_csv("df_dnm_features_table.tsv", sep = "\t")
-
-# Will add feature list...
-features = ["VQSLOD", "QD"]
-df_features = df_train[features]
-df_train["truth"] = 1
-
-X = df_features.values
-y = df_train["truth"].values
-y[0:50] = 0
 
 # We should vary the hyperparameters in a grid search
 rf_clf_snv = RandomForestClassifier(max_features = "auto")

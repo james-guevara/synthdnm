@@ -14,9 +14,10 @@ from extract_features import make_sample_index_dicts
 from extract_features import make_offspring_index_dict
 from extract_features import make_features_dict 
 from extract_features import make_func_name_dict 
+import joblib
 from make_private_vcf import make_private_vcf
 from swap_pedigree import swap_pedigree
-from training import train_snv_classifier
+from training import train_random_forest_classifier 
 import sys
 
 # todo: provide default feature files for standard VCF formats (GATK, DeepVariant...), allow for making feature file
@@ -84,12 +85,33 @@ def train(args):
     key = ["chrom", "pos", "ref", "alt", "iid"]
     # So, train on the other elements, but get column names first...
     # df_train = pd.read_csv(args.training_set_tsv, sep = "\t").drop(key, axis = 1)
+
     df_train = pd.read_csv(args.training_set_tsv, sep = "\t")
+
     df_snv_train = df_train[( mask := (df_train["ref"].str.len() == 1) & (df_train["alt"].str.len() == 1) )]
+    clf_snv = train_random_forest_classifier(df_snv_train) # SNV classifier uses hyperparameters specified in function definition (by default) 
+    joblib.dump(clf_snv, "clf_snv_test.pkl")
+
     df_indel_train = df_train[~mask]
+    clf_indel = train_random_forest_classifier(df_indel_train)
+    joblib.dump(clf_indel, "clf_indel_test.pkl")
+
     # Handle sex chromosomes...
 
     # How to ensure that column names are in correct order? 
+
+def grid_search(args)
+    key = ["chrom", "pos", "ref", "alt", "iid"]
+
+    df_train = pd.read_csv(args.training_set_tsv, sep = "\t")
+
+    df_snv_train = df_train[( mask := (df_train["ref"].str.len() == 1) & (df_train["alt"].str.len() == 1) )]
+    clf_snv = train_random_forest_classifier(df_snv_train) # SNV classifier uses hyperparameters specified in function definition (by default) 
+
+    df_indel_train = df_train[~mask]
+    clf_indel = train_random_forest_classifier(df_indel_train)
+
+
 
 """
 There are 3 modes to synthdnm: classify mode, make_training_set mode, and train mode
@@ -124,6 +146,10 @@ Should add training file as optional argument? (with parameters to use?)
 parser_train = subparsers.add_parser("train", help = "Train classifiers")
 parser_train.set_defaults(func = train)
 
+# "grid_search" mode
+parser_grid_search = subparsers.add_parser("grid_search", help = "Randomized grid search across hyperparameters.")
+parser_grid_search.set_defaults(func = run_grid_search)
+
 # Arguments common to both modes:
 # parser.add_argument("--vcf_file", help = "VCF file input", required = True)
 parser.add_argument("--vcf_file", help = "VCF file input", required = "classify" in sys.argv or "make_training_set" in sys.argv)
@@ -132,13 +158,12 @@ parser.add_argument("--ped_file", help = "Pedigree file (.fam/.ped/.psam) input"
 parser.add_argument("--region", help = "Interval ('{}' or '{}:{}-{}' in format of chr or chr:start-end) on which to run training or classification")
 parser.add_argument("--features_file", help = "Features file input")
 parser.add_argument("--output_folder", help = "Output folder for output files (if not used, then output folder is set to 'synthdnm_output')")
-parser.add_argument("--training_set_tsv", help = "Training set file (created using make_training_set mode)", required = "train" in sys.argv)
+parser.add_argument("--training_set_tsv", help = "Training set file (created using make_training_set mode)", required = "train" in sys.argv or "grid_search" in sys.argv)
 
 args = parser.parse_args()
 args.func(args)
 
 """
 To do:
-    1. Add train argument
     2. Change name of private.vcf file (to match the input VCF filename but with "private" appended).
 """
