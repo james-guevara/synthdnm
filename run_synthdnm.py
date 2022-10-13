@@ -18,6 +18,7 @@ import joblib
 from make_private_vcf import make_private_vcf
 from swap_pedigree import swap_pedigree
 from training import train_random_forest_classifier 
+from training import randomized_grid_search 
 import sys
 
 # todo: provide default feature files for standard VCF formats (GATK, DeepVariant...), allow for making feature file
@@ -100,18 +101,28 @@ def train(args):
 
     # How to ensure that column names are in correct order? 
 
-def grid_search(args)
+def grid_search(args):
     key = ["chrom", "pos", "ref", "alt", "iid"]
 
     df_train = pd.read_csv(args.training_set_tsv, sep = "\t")
 
     df_snv_train = df_train[( mask := (df_train["ref"].str.len() == 1) & (df_train["alt"].str.len() == 1) )]
-    clf_snv = train_random_forest_classifier(df_snv_train) # SNV classifier uses hyperparameters specified in function definition (by default) 
+    grid_search_snv = randomized_grid_search(df_snv_train) # SNV classifier uses hyperparameters specified in function definition (by default) 
 
     df_indel_train = df_train[~mask]
-    clf_indel = train_random_forest_classifier(df_indel_train)
+    grid_search_indel = randomized_grid_search(df_indel_train)
 
-
+    #print(grid_search_snv)
+    #print(grid_search_snv.best_estimator_)
+    #print(grid_search_snv.best_score_)
+    #print(grid_search_snv.best_params_)
+    #print(grid_search_snv.cv_results_)
+    print(grid_search_snv.cv_results_)
+    df_results = pd.concat([ pd.DataFrame(grid_search_snv.cv_results_["params"]),
+                             pd.DataFrame(grid_search_snv.cv_results_["mean_test_score"], columns = ["Accuracy"]) 
+                           ], axis = 1)
+    # print(df_results)
+    df_results.to_csv("df_snv_results.tsv", sep = "\t", index = False)
 
 """
 There are 3 modes to synthdnm: classify mode, make_training_set mode, and train mode
@@ -148,7 +159,7 @@ parser_train.set_defaults(func = train)
 
 # "grid_search" mode
 parser_grid_search = subparsers.add_parser("grid_search", help = "Randomized grid search across hyperparameters.")
-parser_grid_search.set_defaults(func = run_grid_search)
+parser_grid_search.set_defaults(func = grid_search)
 
 # Arguments common to both modes:
 # parser.add_argument("--vcf_file", help = "VCF file input", required = True)
