@@ -67,7 +67,7 @@ def make_func_name_dict():
     return func_name_dict
 
 # Extract putative de novo mutations from the VCF
-def make_features_dict(vcf_filepath, offspring_index_id_dict, offspring_parents_dict, sample_index_dict, func_name_dict, features_file = None, region = None):
+def make_features_dict(vcf_filepath, offspring_index_id_dict, offspring_parents_dict, sample_index_dict, sample_sex_and_phenotype_dict, func_name_dict, features_file = None, region = None):
     dnm_features_dict = {}
     vcf_iterator = pysam.VariantFile(vcf_filepath, mode = "r")
 
@@ -125,8 +125,8 @@ def make_features_dict(vcf_filepath, offspring_index_id_dict, offspring_parents_
     for record in vcf_iterator:
         # Skip multiallelic variants
         if len(record.alts) > 1: continue
-        # Skip X and Y for now
-        if "X" in record.chrom or "Y" in record.chrom: continue
+        # Skip X and Y for now (not anymore...)
+        # if "X" in record.chrom or "Y" in record.chrom: continue
         # Get INFO-level features
         dnm_info_features = {}
         for feature in info_features:
@@ -142,12 +142,18 @@ def make_features_dict(vcf_filepath, offspring_index_id_dict, offspring_parents_
             father_GT = record.samples[sample_index_dict[father_id]]["GT"]
             mother_GT = record.samples[sample_index_dict[mother_id]]["GT"]
             # Filter out non-putative de novo mutations
-            if offspring_GT != (0, 1): continue
-            if father_GT != (0, 0): continue
-            if mother_GT != (0, 0): continue
+            if "X" in record.chrom and sample_sex_and_phenotype_dict[offspring_id] == "1":
+                if offspring_GT != (0,1): continue
+                if mother_GT != (0, 0): continue
+            elif "Y" in record.chrom and sample_sex_and_phenotype_dict[offspring_id] == "1":
+                if offspring_GT != (0,1): continue
+                if father_GT != (0, 0): continue
+            else:
+                if offspring_GT != (0, 1): continue
+                if father_GT != (0, 0): continue
+                if mother_GT != (0, 0): continue
 
-
-            key = (record.chrom, record.pos, record.ref, record.alts[0], offspring_id)
+            key = (record.chrom, record.pos, record.ref, record.alts[0], offspring_id, sample_sex_and_phenotype_dict[offspring_id]["sex_code"], sample_sex_and_phenotype_dict[offspring_id]["phenotype_code"])
             dnm_features_dict[key] = {}
 
             dnm_features_dict[key]["offspring_GT"] = offspring_GT
@@ -221,8 +227,8 @@ def make_features_dict(vcf_filepath, offspring_index_id_dict, offspring_parents_
             retained_features.append("{}_{}".format("max_parent", feature))
             retained_features.append("{}_{}".format("min_parent", feature))
 
-    df_dnm_features_dict = df_dnm_features_dict.rename(columns = {"level_0": "chrom", "level_1": "pos", "level_2": "ref", "level_3": "alt", "level_4": "iid"})
-    key = ["chrom", "pos", "ref", "alt", "iid"]
+    df_dnm_features_dict = df_dnm_features_dict.rename(columns = {"level_0": "chrom", "level_1": "pos", "level_2": "ref", "level_3": "alt", "level_4": "iid", "level_5": "sex", "level_6": "phenotype"})
+    key = ["chrom", "pos", "ref", "alt", "iid", "sex", "phenotype"]
     df_dnm_features_dict = df_dnm_features_dict[key + retained_features]
     return df_dnm_features_dict
 

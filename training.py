@@ -19,7 +19,7 @@ def train_random_forest_classifier(df_input,
         n_jobs = -1,
         verbose = 1):
 
-    key = ["chrom", "pos", "ref", "alt", "iid"]
+    key = ["chrom", "pos", "ref", "alt", "iid", "sex", "phenotype"]
     df = df_input.drop(key, axis = 1)
     features_list = list(df.columns)
 
@@ -37,14 +37,18 @@ def train_random_forest_classifier(df_input,
             n_jobs = n_jobs,
             verbose = verbose
             )
-
     clf.fit(df.values[:, 0:-1], df.values[:, -1])
+    clf.feature_names = features_list
     return clf
 
 def randomized_grid_search(df_input):
     distributions = dict(n_estimators = rv_discrete(values = ([100, 125], [0.5, 0.5]) ),
                          min_weight_fraction_leaf = rv_discrete(values = ([0, 0.01, 0.05], [0.5, 0.2, 0.3]))
                         )
+
+    params = {"n_estimators": [50, 75, 100, 125, 150, 175, 200],
+              "max_depth": [200, 250, 300, 350, 400, 450, 500]
+             }
 
     key = ["chrom", "pos", "ref", "alt", "iid"]
     df = df_input.drop(key, axis = 1)
@@ -54,7 +58,8 @@ def randomized_grid_search(df_input):
                                  n_jobs = -1,
                                  verbose = 1)
     
-    random_search = RandomizedSearchCV(clf, distributions, random_state = 42)
+    # random_search = RandomizedSearchCV(clf, distributions, random_state = 42)
+    random_search = RandomizedSearchCV(clf, params, random_state = 42)
     random_search.fit(df.values[:, 0:-1], df.values[:, -1])
     return random_search 
 
