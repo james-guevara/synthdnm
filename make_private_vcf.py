@@ -1,9 +1,10 @@
 import pysam
 import sys
 
-def make_private_vcf(vcf_filepath, pedigree_table, sample_index_table, region = None):
+def make_private_vcf(vcf_filepath, pedigree_table, sample_index_table, region = None, output_folder):
     vcf_iterator = pysam.VariantFile(vcf_filepath, mode = "r")
-    vcf_out = pysam.VariantFile("private.vcf", mode = "w", header = vcf_iterator.header)
+    private_vcf_filepath = "{}/{}.private.vcf".format(output_folder, vcf_filepath.removesuffix(".gz").removesuffix(".vcf").stem)
+    vcf_out = pysam.VariantFile(private_vcf_filepath, mode = "w", header = vcf_iterator.header)
     number_of_samples = len(vcf_iterator.header.samples)
     for record in vcf_iterator.fetch(region = region):
         # Skip multiallelic variants
@@ -30,4 +31,4 @@ def make_private_vcf(vcf_filepath, pedigree_table, sample_index_table, region = 
             if len(families_with_alternate_alleles) > 1: break
         if len(families_with_alternate_alleles) == 1: vcf_out.write(record) 
     vcf_out.close()
-    pysam.tabix_index("private.vcf", preset = "vcf", force = True)
+    pysam.tabix_index(private_vcf_filepath, preset = "vcf", force = True)

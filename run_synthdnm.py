@@ -21,9 +21,8 @@ from training import train_random_forest_classifier
 from training import randomized_grid_search 
 import sys
 
-# todo: provide default feature files for standard VCF formats (GATK, DeepVariant...), allow for making feature file
+# To do: provide default feature files for standard VCF formats (GATK, DeepVariant...), allow for making feature file
 # Motivation behind using rare, inherited variants: chances of 0/1 parent 0/1 child in only one family being false positive is very low. (do naive probability calculation) vs. if it's a common variant (present in many families). So chances are the rare, inherited  variant is genotyped correctly is relatively high
-
 # current_time = strftime("%Y-%m-%d_%H.%M.%S", gmtime())
 
 def run_classify(args):
@@ -36,8 +35,7 @@ def run_classify(args):
     # Extract features 
     df_dnm_features_dict = make_features_dict(args.vcf_file, offspring_index_id_dict, offspring_parents_dict, sample_index_dict, sample_sex_and_phenotype_dict, func_name_dict, args.features_file, args.region)
 
-    if args.output_folder:
-        df_dnm_features_dict.to_csv("df_dnm_features_dict_testing.tsv", sep = "\t", index = False)
+    df_dnm_features_dict.to_csv("{}/df_dnm_features.tsv".format(args.output_folder), sep = "\t", index = False)
 
     # Run classifiers...
     # df_snv_preds   = run_snv_classifier(df_snv, clf_snv)  
@@ -57,7 +55,7 @@ def run_make_training_set(args):
     else:
         # Creating the swapped pedigree file
         swapped_pedigree_dict = swap_pedigree(pedigree_dict)
-        swapped_pedigree_file = "{}_swapped.ped".format(Path(args.ped_file).stem)
+        swapped_pedigree_file = "{}/{}_swapped.ped".format(args.output_folder, Path(args.ped_file).stem)
         with open(swapped_pedigree_file, "w") as f:
             for family in swapped_pedigree_dict:
                 for offspring in swapped_pedigree_dict[family]["offspring"]: print("{}\t{}\t{}\t{}\t{}\t{}".format(family, offspring, swapped_pedigree_dict[family]["father_id"], swapped_pedigree_dict[family]["mother_id"], sample_sex_and_phenotype_dict[offspring]["sex_code"], sample_sex_and_phenotype_dict[offspring]["phenotype_code"]), file = f)
@@ -84,7 +82,7 @@ def run_make_training_set(args):
     df_dnm_features_dict_truth0["truth"] = 0
 
     df_dnm_features_concat = pd.concat([df_dnm_features_dict_truth1, df_dnm_features_dict_truth0])
-    df_dnm_features_concat.to_csv("df_dnm_features_dict_priv.tsv", sep = "\t", index = False)
+    df_dnm_features_concat.to_csv("df_dnm_features_training.tsv", sep = "\t", index = False)
 
 def train(args):
     # The key is always 6 elements: ["chrom", "pos", "ref", "alt", "iid", "sex"]
@@ -105,22 +103,22 @@ def train(args):
 
     try:
         clf_snv = train_random_forest_classifier(df_snv_train) # SNV classifier uses hyperparameters specified in function definition (by default) 
-        joblib.dump(clf_snv, "clf_snv_test.pkl")
-    except ValueError: print("Couldn't create model.")
+        joblib.dump(clf_snv, "clf_snv.pkl")
+    except ValueError: print("Couldn't create autosome SNV model.")
 
     try:
         clf_indel = train_random_forest_classifier(df_indel_train)
         joblib.dump(clf_indel, "clf_indel_test.pkl")
-    except ValueError: print("Couldn't create model.")
+    except ValueError: print("Couldn't create autosome indel model.")
 
     try:
         clf_snv_male_sex_chromosomes = train_random_forest_classifier(df_snv_male_sex_chromosomes_train)
         joblib.dump(clf_snv_male_sex_chromosomes, "clf_snv_msc_test.pkl")
-    except ValueError: print("Couldn't create model.")
+    except ValueError: print("Couldn't create SNV male sex chromosome model.")
     try:
         clf_indel_male_sex_chromosomes = train_random_forest_classifier(df_indel_male_sex_chromosomes_train)
         joblib.dump(clf_indel_male_sex_chromosomes, "clf_indel_msc_test.pkl")
-    except ValueError: print("Couldn't create model.")
+    except ValueError: print("Couldn't create indel male sex chromosome model.")
 
 def grid_search(args):
     key = ["chrom", "pos", "ref", "alt", "iid"]
@@ -138,12 +136,15 @@ def grid_search(args):
     #print(grid_search_snv.best_score_)
     #print(grid_search_snv.best_params_)
     #print(grid_search_snv.cv_results_)
-    print(grid_search_snv.cv_results_)
-    df_results = pd.concat([ pd.DataFrame(grid_search_snv.cv_results_["params"]),
-                             pd.DataFrame(grid_search_snv.cv_results_["mean_test_score"], columns = ["Accuracy"]) 
-                           ], axis = 1)
-    # print(df_results)
-    df_results.to_csv("df_snv_results.tsv", sep = "\t", index = False)
+    df_snv_results = pd.concat([ pd.DataFrame(grid_search_snv.cv_results_["params"]),
+                                 pd.DataFrame(grid_search_snv.cv_results_["mean_test_score"], columns = ["Accuracy"]) 
+                               ], axis = 1)
+    df_snv_results.to_csv("{}/df_snv_results.tsv".format(args.output_folder), sep = "\t", index = False)
+
+    df_indel_results = pd.concat([ pd.DataFrame(grid_search_indel.cv_results_["params"]),
+                                 pd.DataFrame(grid_search_indel.cv_results_["mean_test_score"], columns = ["Accuracy"]) 
+                               ], axis = 1)
+    df_indel_results.to_csv("{}/df_indel_results.tsv".format(args.output_folder), sep = "\t", index = False)
 
 """
 There are 3 modes to synthdnm: classify mode, make_training_set mode, and train mode
@@ -162,7 +163,6 @@ train mode consists of:
 parser = argparse.ArgumentParser(description = "SynthDNM: a de novo mutation classifier and training paradigm")
 subparsers = parser.add_subparsers(help = "Available sub-commands")
 
-# "classify" mode arguments
 parser_classify = subparsers.add_parser("classify", help = "Classify DNMs using pre-trained classifiers.")
 # parser_classify.add_argument("--clf_folder", help = "Folder that contains the classifiers, which must be in .pkl format (if not specified, will look for them in the default data folder)")
 parser_classify.set_defaults(func = run_classify)
@@ -183,18 +183,9 @@ parser.add_argument("--ped_file", help = "Pedigree file (.fam/.ped/.psam) input"
 parser.add_argument("--swapped_ped_file", help = "Pre-existing swapped pedigree file")
 parser.add_argument("--region", help = "Interval ('{}' or '{}:{}-{}' in format of chr or chr:start-end) on which to run training or classification")
 parser.add_argument("--features_file", help = "Features file input")
-parser.add_argument("--output_folder", help = "Output folder for output files (if not used, then output folder is set to 'synthdnm_output')")
+parser.add_argument("--output_folder", help = "Output folder for output files (if not used, then output folder is set to 'synthdnm_output')", type = Path, default = Path("synthdnm_output"))
 parser.add_argument("--training_set_tsv", help = "Training set file (created using make_training_set mode)", required = "train" in sys.argv or "grid_search" in sys.argv)
 
 args = parser.parse_args()
-
-output_folder = Path("synthdnm_output")
-if args.output_folder: output_folder = Path(args.output_folder)
-output_folder.mkdir(parents = True, exist_ok = True)
-
+args.output_folder.mkdir(parents = True, exist_ok = True)
 args.func(args)
-
-"""
-To do:
-    2. Change name of private.vcf file (to match the input VCF filename but with "private" appended).
-"""
