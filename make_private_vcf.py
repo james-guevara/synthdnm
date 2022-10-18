@@ -1,9 +1,10 @@
+from pathlib import Path
 import pysam
 import sys
 
-def make_private_vcf(vcf_filepath, pedigree_table, sample_index_table, region = None, output_folder):
+def make_private_vcf(vcf_filepath, pedigree_table, sample_index_table, output_folder, region = None):
     vcf_iterator = pysam.VariantFile(vcf_filepath, mode = "r")
-    private_vcf_filepath = "{}/{}.private.vcf".format(output_folder, vcf_filepath.removesuffix(".gz").removesuffix(".vcf").stem)
+    private_vcf_filepath = "{}/{}.private.vcf".format(output_folder, Path(vcf_filepath.removesuffix(".gz").removesuffix(".vcf")).stem)
     vcf_out = pysam.VariantFile(private_vcf_filepath, mode = "w", header = vcf_iterator.header)
     number_of_samples = len(vcf_iterator.header.samples)
     for record in vcf_iterator.fetch(region = region):
@@ -32,3 +33,6 @@ def make_private_vcf(vcf_filepath, pedigree_table, sample_index_table, region = 
         if len(families_with_alternate_alleles) == 1: vcf_out.write(record) 
     vcf_out.close()
     pysam.tabix_index(private_vcf_filepath, preset = "vcf", force = True)
+    bgzipped_private_vcf_filepath = "{}.{}".format(private_vcf_filepath, "gz")
+    assert(Path(bgzipped_private_vcf_filepath).exists()), "The expected bg-zipped private VCF file does not exist."
+    return bgzipped_private_vcf_filepath

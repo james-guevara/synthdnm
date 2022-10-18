@@ -56,19 +56,9 @@ def randomized_grid_search(df_input):
 
     clf = RandomForestClassifier(random_state = 42,
                                  n_jobs = -1,
-                                 verbose = 1)
+                                 verbose = 0)
     
-    # random_search = RandomizedSearchCV(clf, distributions, random_state = 42)
+
     random_search = RandomizedSearchCV(clf, params, random_state = 42)
     random_search.fit(df.values[:, 0:-1], df.values[:, -1])
     return random_search 
-
-# clf_snv.fit(X, y)
-#distributions = dict(n_estimators = rv_discrete(values = ([100, 125], [0.5, 0.5]) ),
-#                     min_weight_fraction_leaf = rv_discrete(values = ([0, 0.01, 0.05], [0.5, 0.2, 0.3]))
-#                     )
-#clf_snv = RandomizedSearchCV(rf_clf_snv, distributions, random_state = 42)
-#search = clf_snv.fit(X, y)
-#print(search.best_params_)
-
-# dump(clf_snv, "clf_snv.joblib")
