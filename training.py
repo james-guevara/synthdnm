@@ -56,6 +56,7 @@ def randomized_grid_search(df_input):
                                  verbose = 0,
                                  warm_start = True)
     
-    random_search = RandomizedSearchCV(clf, params, random_state = 42)
+    #random_search = RandomizedSearchCV(clf, params, random_state = 42, n_iter = 250)
+    random_search = RandomizedSearchCV(clf, params, random_state = 42, n_iter = 10)
     random_search.fit(df.values[:, 0:-1], df.values[:, -1])
     return random_search 

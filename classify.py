@@ -19,3 +19,6 @@ def run_indel_classifier(df, clf_indel_filepath):
     df_preds  = pd.DataFrame({"chrom": df_indel_values[:, 0], "pos": df_indel_values[:, 1], "ref": df_indel_values[:, 2], "alt": df_indel_values[:, 3], "iid": df_indel_values[:, 4], "prob": preds_indel_values[:, 0]})
     df_indel["copy_index"] = df_indel.index
     return df_indel.merge(df_preds, on = key, how = "left")
+
+
+
