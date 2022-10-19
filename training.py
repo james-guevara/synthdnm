@@ -43,7 +43,7 @@ def train_random_forest_classifier(df_input,
 def randomized_grid_search(df_input):
     params = {"n_estimators": [50, 75, 100, 125, 150, 175, 200],
               "max_depth": [None, 100, 200, 300, 400, 500],
-              "min_samples_split": [.01, .05, .1, 1, 2],
+              "min_samples_split": [.01, .05, .1, 2],
               "min_samples_leaf": [.01, .05, .1, 1],
              }
 
