@@ -136,7 +136,7 @@ def grid_search(args):
     df_indel_train = df_train[~mask]
     grid_search_indel = randomized_grid_search(df_indel_train)
 
-    #print(grid_search_snv)
+    # print(grid_search_snv)
     # print(grid_search_snv.best_estimator_)
     # print(grid_search_indel.best_estimator_)
     # print(grid_search_snv.best_score_)
@@ -161,7 +161,7 @@ def grid_search(args):
     except ValueError: print("Couldn't create autosome indel model.")
 
 """
-There are 3 modes to synthdnm: classify mode, make_training_set mode, and train mode
+There are 4 modes to synthdnm: classify mode, make_training_set mode, and train mode, and grid_search mode
 classify mode consists of:
   - feature extraction
   - classification
