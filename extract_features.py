@@ -46,11 +46,6 @@ def make_offspring_index_dict(offspring_parents_dict, sample_index_dict):
         offspring_index_id_dict[sample_index_dict[sample]] = sample 
     return offspring_index_id_dict
 
-
-def dispatch(func_name_dict, name, *args, **kwargs):
-    print(*args)
-    func_name_dict[name](*args, **kwargs)
-
 def get_ratio(feature):
     # Check that it's tuple of size 2
     buffer_ = 1.0
@@ -62,21 +57,18 @@ def get_log2_ratio(feature):
     feature_log2_coverage_ratio = np.log2( (float(feature[0]) + float(feature[1]) + buffer_) / (np.median([float(feature[0]), float(feature[1])]) + buffer_) )
     return feature_log2_coverage_ratio
 
-def make_func_name_dict():
-    func_name_dict = {"get_ratio": get_ratio, "get_log2_ratio": get_log2_ratio}
-    return func_name_dict
-
 # Extract putative de novo mutations from the VCF
-def make_features_dict(vcf_filepath, offspring_index_id_dict, offspring_parents_dict, sample_index_dict, sample_sex_and_phenotype_dict, func_name_dict, features_file = None, region = None):
+def make_features_dict(vcf_filepath, offspring_index_id_dict, offspring_parents_dict, sample_index_dict, sample_sex_and_phenotype_dict, features_file = None, region = None):
+    func_name_dict = {"get_ratio": get_ratio, "get_log2_ratio": get_log2_ratio}
+
     dnm_features_dict = {}
     vcf_iterator = pysam.VariantFile(vcf_filepath, mode = "r")
 
-    header_id = "\t".join(["chrom", "pos", "ref", "alt", "iid", "offspring_GT", "father_GT", "mother_GT"])
-
-    excluded_info_features = set(["AC", "AF", "AN", "MLEAC", "MLEAF", "culprit"])
+    excluded_info_features = set(["AC", "AF", "AN", "ClippingRankSum", "DP", "DS", "END", "ExcessHet", "HaplotypeScore", "MLEAC", "MLEAF", "NEGATIVE_TRAIN_SITE", "POSITIVE_TRAIN_SITE", "RAW_MQ", "VariantType", "culprit"])
 
     info_features = []
     format_features = []
+    format_features_for_custom_features = [] # custom features may use these features as inputs (but they should not be saved in the output table)
     custom_features = []
     custom_feature_function_dict = {}
     custom_feature_input_dict = {}
@@ -94,7 +86,8 @@ def make_features_dict(vcf_filepath, offspring_index_id_dict, offspring_parents_
                 func = func_name_dict[function_name]
                 custom_feature_function_dict[feature_name] = func
                 custom_feature_input_dict[feature_name] = input_feature_name
-                # custom_feature_lines.append(line.rstrip())
+
+                if input_feature_name not in format_features: format_features_for_custom_features.append(input_feature_name)
     else:
         # Default features to extract
         for info_field in vcf_iterator.header.info:
@@ -111,8 +104,6 @@ def make_features_dict(vcf_filepath, offspring_index_id_dict, offspring_parents_
             custom_features.append("AD_log2_coverage_ratio")
             custom_feature_function_dict["AD_log2_coverage_ratio"] = func_name_dict["get_log2_ratio"]
             custom_feature_input_dict["AD_log2_coverage_ratio"] = "AD" 
-        # info_features = ["VQSLOD", "ClippingRankSum", "BaseQRankSum", "FS", "SOR", "MQ", "MQRankSum", "QD", "ReadPosRankSum"]
-        # format_features = ["AD", "DP", "GQ", "PL"]
 
     number_of_samples = len(vcf_iterator.header.samples)
 
@@ -166,12 +157,17 @@ def make_features_dict(vcf_filepath, offspring_index_id_dict, offspring_parents_
                 dnm_features_dict[key]["{}_{}".format("father", format_feature)] = record.samples[sample_index_dict[father_id]][format_feature]
                 dnm_features_dict[key]["{}_{}".format("mother", format_feature)] = record.samples[sample_index_dict[mother_id]][format_feature]
 
+            for format_feature in format_features_for_custom_features:
+                dnm_features_dict[key]["{}_{}".format("offspring", format_feature)] = record.samples[i][format_feature] 
+                dnm_features_dict[key]["{}_{}".format("father", format_feature)] = record.samples[sample_index_dict[father_id]][format_feature]
+                dnm_features_dict[key]["{}_{}".format("mother", format_feature)] = record.samples[sample_index_dict[mother_id]][format_feature]
+
+
             # Add INFO-level features for this row
             # dnm_features_dict[key] |= dnm_info_features
             dnm_features_dict[key].update(dnm_info_features)
 
 
-    # custom_features = []
     df_dnm_features_dict = pd.DataFrame.from_dict(dnm_features_dict).transpose().reset_index() 
     for feature_name in custom_features:
         func = custom_feature_function_dict[feature_name]

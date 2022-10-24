@@ -47,7 +47,7 @@ def randomized_grid_search(df_input):
               "min_samples_leaf": [.01, .05, .1, 1],
              }
 
-    key = ["chrom", "pos", "ref", "alt", "iid"]
+    key = ["chrom", "pos", "ref", "alt", "iid", "sex", "phenotype"]
     df = df_input.drop(key, axis = 1)
     features_list = list(df.columns)
 

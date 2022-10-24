@@ -4,16 +4,13 @@ import argparse
 # import os
 import pandas as pd
 from pathlib import Path
-# from pybedtools import BedTool
+from pybedtools import BedTool
 # import sys
 # from time import gmtime, strftime
-from classify import run_snv_classifier
-from classify import run_indel_classifier
 from extract_features import make_pedigree_dicts
 from extract_features import make_sample_index_dicts
 from extract_features import make_offspring_index_dict
 from extract_features import make_features_dict 
-from extract_features import make_func_name_dict 
 import joblib
 from make_private_vcf import make_private_vcf
 from swap_pedigree import swap_pedigree
@@ -25,17 +22,28 @@ import sys
 # Motivation behind using rare, inherited variants: chances of 0/1 parent 0/1 child in only one family being false positive is very low. (do naive probability calculation) vs. if it's a common variant (present in many families). So chances are the rare, inherited  variant is genotyped correctly is relatively high
 # current_time = strftime("%Y-%m-%d_%H.%M.%S", gmtime())
 
+key = ("chrom", "pos", "ref", "alt", "iid", "sex", "phenotype")
+
 def make_snv_indel_dataframes(df):
     # Make the male sex chromosome dataframe first (to use as a mask for the autosomal df)
     df_msc   = df[( msc_mask := (df["sex"] == 1) & ( (df["chrom"].str.contains("X")) | (df["chrom"].str.contains("Y")) ) )]
-
     df_autosomal = df[~msc_mask]
+
     df_snv   = df_autosomal[( snv_mask := (df_autosomal["ref"].str.len() == 1) & (df_autosomal["alt"].str.len() == 1) )]
     df_indel = df_autosomal[~snv_mask]
-
     df_snv_msc   = df_msc[( snv_mask := (df_msc["ref"].str.len() == 1) & (df_msc["alt"].str.len() == 1) )]
     df_indel_msc = df_msc[~snv_mask]
-    return [df_snv, df_indel, df_snv_msc, df_indel_msc]
+    return [df_snv.dropna(), df_indel.dropna(), df_snv_msc.dropna(), df_indel_msc.dropna()]
+
+def classify(df, clf_folder, variant_type):
+    try:
+        clf   = joblib.load("{}/clf_{}.pkl".format(args.clf_folder, variant_type))
+        preds = clf.predict_proba(df.drop(list(key), axis = 1).values)
+        return preds
+    except FileNotFoundError: print("clf_{}.pkl not found in {}; skipping these predictions..".format(variant_type, args.clf_folder))
+
+def concat_preds(df, preds):
+    return pd.concat([df, pd.DataFrame(preds, index = df.index)], axis = "columns")
 
 def run_classify(args):
     pedigree_dict, offspring_parents_dict, sample_sex_and_phenotype_dict = make_pedigree_dicts(args.ped_file)
@@ -43,10 +51,8 @@ def run_classify(args):
     sample_index_dict, index_sample_dict = make_sample_index_dicts(args.vcf_file)
     offspring_index_id_dict = make_offspring_index_dict(offspring_parents_dict, sample_index_dict)
 
-    func_name_dict = make_func_name_dict()
-
     # Extract features 
-    df_dnm_features = make_features_dict(args.vcf_file, offspring_index_id_dict, offspring_parents_dict, sample_index_dict, sample_sex_and_phenotype_dict, func_name_dict, args.features_file, args.region)
+    df_dnm_features = make_features_dict(args.vcf_file, offspring_index_id_dict, offspring_parents_dict, sample_index_dict, sample_sex_and_phenotype_dict, args.features_file, args.region)
     df_dnm_features.to_csv("{}/df_dnm_features.tsv".format(args.output_folder), sep = "\t", index = False)
 
     if args.feature_extraction_only:
@@ -55,12 +61,25 @@ def run_classify(args):
 
     df_snv, df_indel, df_snv_msc, df_indel_msc = make_snv_indel_dataframes(df_dnm_features)
 
-    # Run classifiers... (use same classify function with different classifiers...)
-    df_snv_preds   = run_snv_classifier(df_snv, clf_snv)  
-    df_indel_preds = run_indel_classifier(df_indel, clf_indel)  
-    df_snv_msc_preds = run_snv_msc_classifier(df_snv_msc, clf_snv_msc)
-    df_indel_msc_preds = run_indel_msc_classifier(df_indel_msc, clf_indel_msc)
-    # Merge dataframes and output to table and bed file 
+    features_list = list(df_snv.drop(list(key), axis = 1).columns)
+
+    snv_preds       = classify(df_snv, args.clf_folder, "snv")
+    indel_preds     = classify(df_indel, args.clf_folder, "indel")
+    snv_msc_preds   = classify(df_snv_msc, args.clf_folder, "snv_msc")
+    indel_msc_preds = classify(df_indel_msc, args.clf_folder, "indel_msc")
+
+    df_snv_with_preds = concat_preds(df_snv, snv_preds)
+    df_indel_with_preds = concat_preds(df_indel, indel_preds)
+    df_snv_msc_with_preds = concat_preds(df_snv_msc, snv_msc_preds)
+    df_indel_msc_with_preds = concat_preds(df_indel_msc, indel_msc_preds)
+    
+    df_concat = pd.concat([df_snv_with_preds, df_indel_with_preds, df_snv_msc_with_preds, df_indel_msc_with_preds]) # .sort_values(["chrom", "start", "end"]) # seems unnecessary (perhaps for X and Y?)
+
+    # Print out a bed file with predictions
+    f_bed = open("{}/{}".format(args.output_folder, "test.bed"), "w")
+    print("\t".join(["chrom", "start", "end"] + list(key)[1:] + ["0", "1"]), file = f_bed)
+    for dnm in BedTool.from_dataframe(df_concat[list(key) + [0, 1]]): print("{}\t{}\t{}\t{}".format(dnm.chrom, dnm.start, dnm.end, "\t".join(dnm[1:])), file = f_bed)
+
 
 def run_make_training_set(args):
     pedigree_dict, offspring_parents_dict, sample_sex_and_phenotype_dict = make_pedigree_dicts(args.ped_file)
@@ -89,13 +108,12 @@ def run_make_training_set(args):
     # Make VCF of private (in 1 family), inherited variants
     bgzipped_private_vcf_filepath = make_private_vcf(args.vcf_file, pedigree_dict, sample_index_dict, args.output_folder, args.region)
 
-    func_name_dict = make_func_name_dict()
     # Extract features using the swapped pedigree file and the private, inherited VCF 
-    df_dnm_features_dict_truth1 = make_features_dict(bgzipped_private_vcf_filepath, offspring_index_id_dict, swapped_offspring_parents_dict, sample_index_dict, sample_sex_and_phenotype_dict, func_name_dict, args.features_file, args.region)
+    df_dnm_features_dict_truth1 = make_features_dict(bgzipped_private_vcf_filepath, offspring_index_id_dict, swapped_offspring_parents_dict, sample_index_dict, sample_sex_and_phenotype_dict, args.features_file, args.region)
     df_dnm_features_dict_truth1["truth"] = 1 # These swapped variants will be our true positives
 
     # For false positives, use the original pedigree file
-    df_dnm_features_dict_truth0 = make_features_dict(args.vcf_file, offspring_index_id_dict, offspring_parents_dict, sample_index_dict, sample_sex_and_phenotype_dict, func_name_dict, args.features_file, args.region)
+    df_dnm_features_dict_truth0 = make_features_dict(args.vcf_file, offspring_index_id_dict, offspring_parents_dict, sample_index_dict, sample_sex_and_phenotype_dict, args.features_file, args.region)
     df_dnm_features_dict_truth0["truth"] = 0
 
     df_dnm_features_concat = pd.concat([df_dnm_features_dict_truth1, df_dnm_features_dict_truth0])
@@ -109,7 +127,6 @@ def train(args):
             joblib.dump(clf, "{}/clf_{}.pkl".format(args.output_folder, variant_type))
         except ValueError: print("Couldn't create {} model.".format(variant_type))
 
-    # The key is always 6 elements: ["chrom", "pos", "ref", "alt", "iid", "sex"]
     key = ["chrom", "pos", "ref", "alt", "iid", "sex", "phenotype"]
 
     df_train = pd.read_csv(args.training_set_tsv, sep = "\t")
@@ -164,7 +181,7 @@ parser = argparse.ArgumentParser(description = "SynthDNM: a de novo mutation cla
 subparsers = parser.add_subparsers(help = "Available sub-commands")
 
 parser_classify = subparsers.add_parser("classify", help = "Classify DNMs using pre-trained classifiers.")
-parser_classify.add_argument("--clf_folder", help = "Folder that contains the classifiers, which must be in .pkl format (if not specified, will look for them in the default data folder)")
+parser_classify.add_argument("--clf_folder", help = "Folder that contains the classifiers, which must be in .pkl format (if not specified, will look for them in the default data folder)", required = True)
 parser_classify.add_argument("-feature_extraction_only", action = "store_true", help = "Only output the features file (without classifying")
 parser_classify.set_defaults(func = run_classify)
 
