@@ -1,0 +1,9 @@
+# Nextflow
+.nextflow*
+work/
+output/
+reports/
+logs/
+
+# Singularity cache
+.singularity/
