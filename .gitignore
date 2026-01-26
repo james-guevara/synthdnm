@@ -1,0 +1,21 @@
+# Nextflow
+.nextflow*
+work/
+output/
+reports/
+logs/
+temp/
+
+# Singularity cache
+.singularity/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.eggs/
+*.egg-info/
+
+# Environment
+.env
+.venv/
