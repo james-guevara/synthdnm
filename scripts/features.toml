@@ -1,0 +1,103 @@
+# SynthDNM Feature Configuration
+#
+# Defines feature sets (tiers) for training classifiers on different cohorts.
+# Feature sets use "extends" to build on each other:
+#   universal -> gatk -> ssc
+#
+# Usage in train.py:
+#   python train.py --feature_set gatk --input training_data.parquet ...
+
+# =============================================================================
+# Column roles
+# =============================================================================
+
+[columns]
+# Identifiers — never used as features
+id = [
+    "#CHROM", "POS", "REF", "ALT", "ALT_specific",
+    "SAMPLE", "AC", "allele_num",
+]
+label = "truth"
+
+# Columns to always drop — cohort-specific, deprecated, or leaky
+drop = [
+    "INFO_AN",                    # Allele number — scales with cohort size
+    "INFO_DP",                    # Site-level depth — scales with cohort size
+    "INFO_ExcessHet",             # Proxy for allele count — always low for AC=2 synthetics, high for common reals
+    "INFO_InbreedingCoeff",       # Depends on cohort structure and size
+    "INFO_ClippingRankSum",       # Deprecated in GATK4, mostly null
+    "INFO_HaplotypeScore",        # Deprecated in GATK4, mostly null
+    "INFO_RAW_MQ",                # Redundant with INFO_MQ
+    "INFO_MQ0",                   # Rarely informative
+    "INFO_DS",                    # Downsampling flag, rarely set
+    "INFO_NEGATIVE_TRAIN_SITE",   # VQSR internal — leaks GATK's own decision
+    "INFO_POSITIVE_TRAIN_SITE",   # VQSR internal — leaks GATK's own decision
+    # String columns that aren't numeric features
+    "INFO_culprit",               # Categorical (GATK annotation name)
+    "INFO_VariantType",           # Categorical (SNP/INDEL/etc)
+    "INFO_AF",                    # String (tuple for multi-allelic)
+    "INFO_MLEAC",                 # String (tuple for multi-allelic)
+    "INFO_MLEAF",                 # String (tuple for multi-allelic)
+]
+
+# =============================================================================
+# Feature sets (tiers)
+# =============================================================================
+
+[features.universal]
+# FORMAT-derived features — available in ALL VCFs (GATK, DeepVariant, GLnexus)
+# Use for: SPARK WES classifier, SPARK WGS classifier
+description = "Trio genotype quality features from FORMAT fields"
+columns = [
+    # Allele ratio: ref / (alt + 1), child + min/max parent
+    "child_AR", "min_AR", "max_AR",
+    # Genotype quality
+    "child_GQ", "min_GQ", "max_GQ",
+    # Read depth
+    "child_DP", "min_DP", "max_DP",
+    # Phred-scaled likelihoods (3 components)
+    "child_PL0", "min_PL0", "max_PL0",
+    "child_PL1", "min_PL1", "max_PL1",
+    "child_PL2", "min_PL2", "max_PL2",
+    # Allele balance (child only — parent AB is always null since parents are hom-ref)
+    "child_AB",
+    # Flags
+    "indel_flag",
+    "haploid_flag",
+]
+
+[features.gatk]
+# GATK site-level INFO metrics — available in SSC + CIRM (GATK-called VCFs)
+# Use for: SSC classifier (transfers to CIRM with all features intact)
+description = "GATK variant quality metrics (QD, FS, MQ, strand/rank-sum tests)"
+extends = "universal"
+columns = [
+    "INFO_QD",              # Quality by depth
+    "INFO_FS",              # Fisher strand bias
+    "INFO_MQ",              # RMS mapping quality
+    "INFO_SOR",             # Strand odds ratio
+    "INFO_BaseQRankSum",    # Base quality rank sum test
+    "INFO_MQRankSum",       # Mapping quality rank sum test
+    "INFO_ReadPosRankSum",  # Read position rank sum test
+]
+
+[features.ssc]
+# SSC-only features — VQSR score only available in SSC VCFs
+# Use for: SSC-only classifier (won't transfer to CIRM or SPARK)
+description = "Adds VQSLOD from GATK VQSR (SSC-specific)"
+extends = "gatk"
+columns = [
+    "INFO_VQSLOD",          # Variant quality score from VQSR
+]
+
+# =============================================================================
+# Training defaults
+# =============================================================================
+
+[training]
+test_size = 0.2
+seed = 42
+n_estimators = 1000
+max_depth = 6
+learning_rate = 0.1
+early_stopping_rounds = 50

@@ -1,13 +1,17 @@
-# Nextflow
-.nextflow*
-work/
+# Output
 output/
-reports/
-logs/
-temp/
 
-# Singularity cache
-.singularity/
+# Job logs
+job_*.out
+job_*.err
+
+# Large resource files (not tracked — download separately)
+resources/*.vcf.gz
+resources/*.vcf.gz.tbi
+resources/*.tsv.gz
+resources/*.chain.gz
+resources/*.psam
+resources/*.fam
 
 # Python
 __pycache__/
@@ -19,3 +23,11 @@ __pycache__/
 # Environment
 .env
 .venv/
+
+# Editor
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store

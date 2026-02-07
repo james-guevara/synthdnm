@@ -1,0 +1,70 @@
+{
+  "description": "SynthDNM classifier evaluation against denovo-db v1.6.1 SSC validated DNMs",
+  "denovo_db_version": "1.6.1",
+  "denovo_db_url": "https://denovo-db.gs.washington.edu/denovo-db/Download.jsp",
+  "genome_build": "hg38 (lifted from hg19 via UCSC liftOver)",
+  "liftover_rate": "212,464 / 212,719 (99.88%)",
+  "sample_id_mapping": "SFARI IDs -> SS IDs via phase_ids files (7,320 mappings)",
+  "matched_variants": 100880,
+  "matched_rate": "100,880 / 187,284 mapped variants (53.9% of total, 81.7% before dedup)",
+  "training_data": {
+    "variants": 99684,
+    "per_class": 50000,
+    "chromosomes": "chr1-chr22, chrX, chrY"
+  },
+  "notes": [
+    "High synthdnm_prob = likely real DNM (keep), low = likely artifact (discard)",
+    "Downstream filters not yet applied: gnomAD AF, segmental duplications, simple repeats",
+    "AC<=1 filter alone raises classification rate to ~98%"
+  ],
+  "models": {
+    "gatk": {
+      "features": 28,
+      "training_auc": 0.9964,
+      "cv_mean_auc": 0.9966,
+      "total_matched": 100880,
+      "classified_real": 76077,
+      "pct_real": 75.4,
+      "mean_prob": 0.7375,
+      "validated_total": 3006,
+      "validated_real": 2872,
+      "validated_pct": 95.5,
+      "validated_mean_prob": 0.9273,
+      "ac1_total": 68687,
+      "ac1_real": 67250,
+      "ac1_pct": 97.9
+    },
+    "ssc": {
+      "features": 29,
+      "training_auc": 0.9964,
+      "cv_mean_auc": 0.9967,
+      "total_matched": 100880,
+      "classified_real": 76642,
+      "pct_real": 76.0,
+      "mean_prob": 0.7442,
+      "validated_total": 3006,
+      "validated_real": 2900,
+      "validated_pct": 96.5,
+      "validated_mean_prob": 0.9349,
+      "ac1_total": 68687,
+      "ac1_real": 67697,
+      "ac1_pct": 98.6
+    },
+    "universal": {
+      "features": 21,
+      "training_auc": 0.9555,
+      "cv_mean_auc": 0.9531,
+      "total_matched": 100880,
+      "classified_real": 84783,
+      "pct_real": 84.0,
+      "mean_prob": 0.767,
+      "validated_total": 3006,
+      "validated_real": 2909,
+      "validated_pct": 96.8,
+      "validated_mean_prob": 0.8695,
+      "ac1_total": 68687,
+      "ac1_real": 67807,
+      "ac1_pct": 98.7
+    }
+  }
+}
