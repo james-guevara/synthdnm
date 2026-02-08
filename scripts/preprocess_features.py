@@ -25,10 +25,25 @@ Usage:
         --feature_dir output/features/ \\
         --output all_features.parquet \\
         --gatk
+
+
+    # Include sex chromosome features (from extract_sex_chrom_dnm_features.py)
+    python preprocess_features.py \\
+        --feature_dir output/features/ \\
+        --sex_chrom_dir output/features_sex_chrom/ \\
+        --caller gatk \\
+        --config scripts/features.toml \\
+        --output training_data.parquet \\
+        --gatk \\
+        --psam resources/SSC.psam \\
+        --par resources/hg38_par.bed \\
+        --sample_n 50000
 """
 
 import argparse
 from pathlib import Path
+import tomllib
+
 import polars as pl
 import sys
 
@@ -55,6 +70,17 @@ def parse_args():
     parser.add_argument("--par", type=str, default=None,
                         help="BED file with pseudoautosomal regions (0-based). "
                              "Variants in PAR regions are set to diploid even on chrX/Y.")
+    parser.add_argument("--sex_chrom_dir", type=str, default=None,
+                        help="Directory containing sex chrom feature files from "
+                             "extract_sex_chrom_dnm_features.py. If provided, these are "
+                             "loaded alongside autosomal features and filtered based on "
+                             "--caller config.")
+    parser.add_argument("--caller", type=str, default=None,
+                        help="Caller name matching [sex_chrom.<caller>] in features.toml "
+                             "(e.g., gatk, dragen, deepvariant). Required if --sex_chrom_dir "
+                             "is provided.")
+    parser.add_argument("--config", type=str, default=None,
+                        help="Path to features.toml config file (required for sex chrom filtering).")
     return parser.parse_args()
 
 
@@ -111,6 +137,151 @@ def read_and_sample(file_list, label, sample_per_file, seed):
     combined = pl.concat(frames)
     combined = combined.with_columns(pl.lit(label).alias("truth"))
     return combined
+
+
+def load_par_regions(par_path):
+    """Load PAR regions from BED file. Returns list of (chrom, start, end)."""
+    par = pl.read_csv(par_path, separator="\t", has_header=False)
+    par = par.rename({par.columns[0]: "chrom", par.columns[1]: "start",
+                      par.columns[2]: "end"})
+    return par.select(["chrom", "start", "end"]).with_columns(
+        pl.col("start").cast(pl.Int64), pl.col("end").cast(pl.Int64),
+    )
+
+
+def build_in_par_expr(par_df):
+    """Build a Polars expression that checks if a variant is in a PAR region.
+
+    BED is 0-based half-open [start, end), VCF POS is 1-based,
+    so: POS > start AND POS <= end.
+    """
+    chrom = pl.col("#CHROM")
+    pos = pl.col("POS").cast(pl.Int64)
+    in_par = pl.lit(False)
+    for row in par_df.iter_rows(named=True):
+        in_par = in_par | (
+            (chrom == row["chrom"]) &
+            (pos > row["start"]) &
+            (pos <= row["end"])
+        )
+    return in_par
+
+
+def load_sex_map(psam_path):
+    """Load pedigree and return a Polars DataFrame with _psam_id and _is_male columns."""
+    with open(psam_path) as fh:
+        first_line = fh.readline()
+    has_header = first_line.startswith("#")
+
+    if has_header:
+        psam = pl.read_csv(psam_path, separator="\t")
+    else:
+        psam = pl.read_csv(psam_path, separator="\t", has_header=False,
+                           new_columns=["FID", "IID", "PAT", "MAT", "SEX", "PHENO"])
+
+    id_col = None
+    sex_col = None
+    for c in psam.columns:
+        cl = c.lower().lstrip("#")
+        if cl in ("iid", "sample"):
+            id_col = c
+        elif cl == "sex":
+            sex_col = c
+
+    if id_col is None or sex_col is None:
+        return None
+
+    return psam.select([
+        pl.col(id_col).cast(pl.Utf8).alias("_psam_id"),
+        (pl.col(sex_col).cast(pl.Utf8) == "1").alias("_is_male"),
+        (pl.col(sex_col).cast(pl.Utf8) == "2").alias("_is_female"),
+    ])
+
+
+def filter_sex_chrom_artifacts(df, psam_path, par_path, caller_config):
+    """Filter sex chromosome artifacts based on caller-specific config.
+
+    Removes:
+    - Female chrY variants (always artifact, any caller)
+    - Male het on non-PAR chrX/Y for diploid callers (artifact)
+    - Variants where the biologically relevant parent is missing:
+        - Male non-PAR chrX: mother must be HOM_REF (chrX inherited from mother)
+        - Male chrY: father must be HOM_REF (chrY inherited from father)
+
+    Requires child_gt_type, father_gt_type, mother_gt_type columns
+    (from extract_sex_chrom_dnm_features.py).
+    """
+    chrom = pl.col("#CHROM")
+    is_chrX = chrom.str.contains("X")
+    is_chrY = chrom.str.contains("Y")
+    is_sex_chrom = is_chrX | is_chrY
+
+    n_before = len(df)
+
+    # Load sex info
+    sex_map = load_sex_map(psam_path)
+    if sex_map is None:
+        print("  Warning: Could not load sex info, skipping sex chrom filtering",
+              file=sys.stderr)
+        return df
+
+    df = df.join(sex_map, left_on="SAMPLE", right_on="_psam_id", how="left")
+
+    # Load PAR regions
+    par_df = load_par_regions(par_path) if par_path else None
+    in_par = build_in_par_expr(par_df) if par_df is not None else pl.lit(False)
+
+    ploidy = caller_config.get("male_nonpar_ploidy", "diploid")
+
+    # --- Filter 1: Drop female chrY variants ---
+    female_chry_mask = pl.col("_is_female") & is_chrY
+    n_female_chry = df.filter(female_chry_mask).height
+    df = df.filter(~female_chry_mask)
+
+    # --- Filter 2: Drop male het on non-PAR for diploid callers ---
+    n_male_het_nonpar = 0
+    if ploidy == "diploid" and "child_gt_type" in df.columns:
+        # gt_type 1 = HET (cyvcf2 encoding)
+        male_het_nonpar_mask = (
+            pl.col("_is_male") &
+            is_sex_chrom &
+            ~in_par &
+            (pl.col("child_gt_type") == 1)
+        )
+        n_male_het_nonpar = df.filter(male_het_nonpar_mask).height
+        df = df.filter(~male_het_nonpar_mask)
+
+    # --- Filter 3: Require biologically relevant parent to be HOM_REF ---
+    # gt_type 0 = HOM_REF (cyvcf2 encoding)
+    n_missing_parent = 0
+    if "father_gt_type" in df.columns and "mother_gt_type" in df.columns:
+        # Male non-PAR chrX: mother must be HOM_REF (chrX inherited from mother)
+        male_chrx_mom_missing = (
+            pl.col("_is_male") & is_chrX & ~in_par &
+            (pl.col("mother_gt_type") != 0)
+        )
+        # Male chrY: father must be HOM_REF (chrY inherited from father)
+        male_chry_dad_missing = (
+            pl.col("_is_male") & is_chrY &
+            (pl.col("father_gt_type") != 0)
+        )
+        missing_parent_mask = male_chrx_mom_missing | male_chry_dad_missing
+        n_missing_parent = df.filter(missing_parent_mask).height
+        df = df.filter(~missing_parent_mask)
+
+    # Clean up temp columns
+    df = df.drop(["_is_male", "_is_female"])
+
+    n_after = len(df)
+    n_removed = n_before - n_after
+    print(f"  Sex chrom filtering (caller={ploidy}):", file=sys.stderr)
+    print(f"    Female chrY dropped: {n_female_chry:,}", file=sys.stderr)
+    print(f"    Male het non-PAR dropped: {n_male_het_nonpar:,}", file=sys.stderr)
+    print(f"    Relevant parent missing dropped: {n_missing_parent:,}", file=sys.stderr)
+    print(f"    Total removed: {n_removed:,} ({n_before:,} -> {n_after:,})",
+          file=sys.stderr)
+
+    return df
 
 
 def compute_derived_features(df):
@@ -193,7 +364,6 @@ def correct_haploid_flag(df, psam_path=None, par_path=None):
     old_haploid_sum = df["haploid_flag"].sum()
 
     if psam_path is None:
-        # Conservative default: only chrY is haploid
         df = df.with_columns(
             pl.when(chrom.str.contains("Y"))
               .then(pl.lit(1))
@@ -205,33 +375,10 @@ def correct_haploid_flag(df, psam_path=None, par_path=None):
               f"{old_haploid_sum} -> {new_haploid_sum} haploid variants",
               file=sys.stderr)
     else:
-        # Read pedigree for sex info
-        # Detect if file has a header (starts with #)
-        with open(psam_path) as fh:
-            first_line = fh.readline()
-        has_header = first_line.startswith("#")
-
-        if has_header:
-            psam = pl.read_csv(psam_path, separator="\t")
-        else:
-            # Standard .fam format: FID, IID, PAT, MAT, SEX, PHENO
-            psam = pl.read_csv(psam_path, separator="\t", has_header=False,
-                               new_columns=["FID", "IID", "PAT", "MAT", "SEX", "PHENO"])
-
-        # Find sample ID and sex columns (handles #IID, IID, SAMPLE, etc.)
-        id_col = None
-        sex_col = None
-        for c in psam.columns:
-            cl = c.lower().lstrip("#")
-            if cl in ("iid", "sample"):
-                id_col = c
-            elif cl == "sex":
-                sex_col = c
-
-        if id_col is None or sex_col is None:
-            print(f"  Warning: Could not find ID/SEX columns in {psam_path} "
-                  f"(columns: {psam.columns}). Using chrY-only default.",
-                  file=sys.stderr)
+        sex_map = load_sex_map(psam_path)
+        if sex_map is None:
+            print(f"  Warning: Could not find ID/SEX columns in {psam_path}. "
+                  f"Using chrY-only default.", file=sys.stderr)
             df = df.with_columns(
                 pl.when(chrom.str.contains("Y"))
                   .then(pl.lit(1))
@@ -239,12 +386,7 @@ def correct_haploid_flag(df, psam_path=None, par_path=None):
                   .alias("haploid_flag")
             )
         else:
-            sex_map = psam.select([
-                pl.col(id_col).cast(pl.Utf8).alias("_psam_id"),
-                (pl.col(sex_col).cast(pl.Utf8) == "1").alias("_is_male"),
-            ])
             n_male = sex_map.filter(pl.col("_is_male")).height
-
             df = df.join(sex_map, left_on="SAMPLE", right_on="_psam_id", how="left")
 
             is_sex_chrom = chrom.str.contains("X") | chrom.str.contains("Y")
@@ -253,7 +395,7 @@ def correct_haploid_flag(df, psam_path=None, par_path=None):
                   .then(pl.lit(1))
                   .otherwise(pl.lit(0))
                   .alias("haploid_flag")
-            ).drop("_is_male")
+            ).drop(["_is_male", "_is_female"])
 
             new_haploid_sum = df["haploid_flag"].sum()
             print(f"  haploid_flag: {n_male} males from psam, "
@@ -263,27 +405,10 @@ def correct_haploid_flag(df, psam_path=None, par_path=None):
 
     # Apply PAR correction
     if par_path is not None:
-        par = pl.read_csv(par_path, separator="\t", has_header=False)
-        par = par.rename({par.columns[0]: "chrom", par.columns[1]: "start",
-                          par.columns[2]: "end"})
-        par = par.select(["chrom", "start", "end"]).with_columns(
-            pl.col("start").cast(pl.Int64), pl.col("end").cast(pl.Int64),
-        )
+        par_df = load_par_regions(par_path)
+        in_par = build_in_par_expr(par_df)
 
         n_before = df.filter(pl.col("haploid_flag") == 1).height
-        pos = pl.col("POS").cast(pl.Int64)
-
-        # Build a single condition for all PAR regions
-        # BED is 0-based half-open [start, end), VCF POS is 1-based
-        # so: POS > start AND POS <= end
-        in_par = pl.lit(False)
-        for row in par.iter_rows(named=True):
-            in_par = in_par | (
-                (chrom == row["chrom"]) &
-                (pos > row["start"]) &
-                (pos <= row["end"])
-            )
-
         df = df.with_columns(
             pl.when(in_par)
               .then(pl.lit(0))
@@ -294,7 +419,7 @@ def correct_haploid_flag(df, psam_path=None, par_path=None):
         n_after = df.filter(pl.col("haploid_flag") == 1).height
         n_corrected = n_before - n_after
         print(f"  PAR correction: {n_corrected} variants changed to diploid "
-              f"({par.height} PAR regions from {par_path})", file=sys.stderr)
+              f"({par_df.height} PAR regions from {par_path})", file=sys.stderr)
 
     return df
 
@@ -356,6 +481,76 @@ def main():
     print(f"Real: {len(real_df)} rows, Synthetic: {len(synth_df)} rows", file=sys.stderr)
 
     df = pl.concat([real_df, synth_df])
+
+    # Load and filter sex chromosome features
+    if args.sex_chrom_dir:
+        if not args.caller:
+            print("Error: --caller required when --sex_chrom_dir is provided",
+                  file=sys.stderr)
+            sys.exit(1)
+        if not args.config:
+            print("Error: --config required when --sex_chrom_dir is provided",
+                  file=sys.stderr)
+            sys.exit(1)
+        if not args.psam:
+            print("Error: --psam required for sex chrom filtering",
+                  file=sys.stderr)
+            sys.exit(1)
+        if not args.par:
+            print("Error: --par required for sex chrom filtering",
+                  file=sys.stderr)
+            sys.exit(1)
+
+        sex_chrom_dir = Path(args.sex_chrom_dir)
+
+        # Load caller config from features.toml
+        with open(args.config, "rb") as f:
+            config = tomllib.load(f)
+        caller_config = config.get("sex_chrom", {}).get(args.caller)
+        if caller_config is None:
+            print(f"Error: No [sex_chrom.{args.caller}] in {args.config}",
+                  file=sys.stderr)
+            sys.exit(1)
+
+        sex_real_files = sorted(sex_chrom_dir.glob("*_real.tsv"))
+        sex_synth_files = sorted(sex_chrom_dir.glob("*_synthetic.tsv"))
+        print(f"Found {len(sex_real_files)} sex chrom real and "
+              f"{len(sex_synth_files)} sex chrom synthetic files", file=sys.stderr)
+
+        if sex_real_files and sex_synth_files:
+            print("Reading sex chrom real features...", file=sys.stderr)
+            sex_real_df = read_and_sample(sex_real_files, label=0,
+                                          sample_per_file=None, seed=args.seed)
+            print("Reading sex chrom synthetic features...", file=sys.stderr)
+            sex_synth_df = read_and_sample(sex_synth_files, label=1,
+                                           sample_per_file=None, seed=args.seed)
+            sex_df = pl.concat([sex_real_df, sex_synth_df])
+            print(f"  Sex chrom raw: {len(sex_df):,} rows "
+                  f"({len(sex_real_df):,} real, {len(sex_synth_df):,} synthetic)",
+                  file=sys.stderr)
+
+            # Filter sex chrom artifacts
+            print("Filtering sex chrom artifacts...", file=sys.stderr)
+            sex_df = filter_sex_chrom_artifacts(
+                sex_df, args.psam, args.par, caller_config
+            )
+
+            # Drop gt_type columns (used for filtering only, not training features)
+            gt_type_cols = [c for c in sex_df.columns if c.endswith("_gt_type")]
+            if gt_type_cols:
+                sex_df = sex_df.drop(gt_type_cols)
+                print(f"  Dropped extraction columns: {gt_type_cols}",
+                      file=sys.stderr)
+
+            # Concat with autosomal data
+            n_auto = len(df)
+            n_sex = len(sex_df)
+            df = pl.concat([df, sex_df], how="diagonal")
+            print(f"  Combined: {n_auto:,} autosomal + {n_sex:,} sex chrom = "
+                  f"{len(df):,} total rows", file=sys.stderr)
+        else:
+            print("Warning: No sex chrom feature files found, skipping",
+                  file=sys.stderr)
 
     # Compute derived features
     print("Computing derived features...", file=sys.stderr)

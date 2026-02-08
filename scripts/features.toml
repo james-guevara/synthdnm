@@ -91,6 +91,31 @@ columns = [
 ]
 
 # =============================================================================
+# Sex chromosome handling
+# =============================================================================
+#
+# Per-caller config for how to interpret sex chromosome genotypes.
+# Used by preprocess_features.py to filter artifacts from sex chrom extraction.
+#
+# male_nonpar_ploidy: how the caller represents male non-PAR chrX/Y genotypes
+#   "diploid" — 0/0, 0/1, 1/1 (GATK, DeepVariant). Male het (0/1) = artifact.
+#   "haploid" — 0, 1 (DRAGEN, bcftools with --ploidy). Het shouldn't occur.
+#
+# Preprocessing uses this + child sex + PAR regions to:
+#   - Drop female chrY variants (always artifact)
+#   - Drop male het on non-PAR chrX/Y for diploid callers (artifact)
+#   - Keep male hom_alt on non-PAR chrX/Y (hemizygous alt, potentially real)
+
+[sex_chrom.gatk]
+male_nonpar_ploidy = "diploid"
+
+[sex_chrom.dragen]
+male_nonpar_ploidy = "haploid"
+
+[sex_chrom.deepvariant]
+male_nonpar_ploidy = "diploid"
+
+# =============================================================================
 # Training defaults
 # =============================================================================
 
